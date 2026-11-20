@@ -79,13 +79,14 @@ loop of bits that slowly (or quickly) mutates.
 | SQUARES MAIN TUNE + CV      | root pitch                                 |
 | SPREAD knob + CV            | change: left = loop locked, right = every step random |
 | A/B button (squares side)   | scale: A = minor pentatonic, B = natural minor |
+| noise side DAC out          | melody pitch CV, 1 V/oct, lowest note = 0 V, only positive |
 
 Voices: melody, sub octave, two harmonies, octave up and a drone that moves
 now and then. Per step the register decides which voices sound, their pulse
 width and which filter caps are switched in.
 
-### stereo delay (replaces the digital noise / sample & hold)
-A clocked stereo ping-pong delay on the wavetable / LPG voice.
+### delay (replaces the digital noise / sample & hold)
+A clocked ping-pong delay on the wavetable / LPG voice, mixed to SAMPLE OUT.
 
 | control / jack              | function                                   |
 |-----------------------------|--------------------------------------------|
@@ -93,8 +94,7 @@ A clocked stereo ping-pong delay on the wavetable / LPG voice.
 | SAMPLE TRIGGER in           | clock when CV IN RATE is unpatched / stopped for 4 s |
 | CLOCK RATE knob             | division: 1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4 1 4/3 3/2 2 |
 | feedback                    | fixed 45%                                  |
-| SAMPLE OUT                  | left: dry + echoes                          |
-| noise side DAC out          | right: echoes (ping-pong)                   |
+| SAMPLE OUT                  | dry + echoes (ping-pong mixed to mono)      |
 | rate LED / PA22 out         | pulse on every echo                         |
 
 Up to 2 s per side (delay lines at 24 kHz); longer times are halved.

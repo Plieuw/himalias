@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.0-beta
+
+- **Sequencer pitch-CV-uitgang** op de DAC-uitgang van de noise-kant: de melodienoot als 1 V/oct, laagste noot = 0 V, alleen positieve spanning (0 tot ~2 V). Patch hem bijvoorbeeld in sample tune CV, dan speelt de wavetable de sequence mee.
+- De delay is daardoor mono: beide ping-pong-kanten gaan naar sample out.
+
 ## v0.4.1-beta
 
 - **Delay rechts klinkt schoner:** de echo's worden geïnterpoleerd in plaats van getrapt (geen metaalachtige spiegeltonen meer), kleine tempo-schommelingen van de klok (< 2%) veranderen de delaytijd niet meer (geen jankende toonhoogte), en er lekt geen linker echo meer naar rechts.

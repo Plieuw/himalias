@@ -21,8 +21,9 @@
 //   - 6 voices: melody, sub octave, two harmonies, octave up, drone; the register
 //     decides per step which voices sound, their pulse width and filter cap
 //
-//  The digital noise / S&H is a stereo ping-pong delay on the wavetable:
-//   - left = SAMPLE OUT (dry + echoes), right = noise side DAC out (echoes)
+//  The digital noise / S&H is a ping-pong delay on the wavetable, mixed to
+//  SAMPLE OUT. The noise side DAC out carries the sequencer pitch CV
+//  (melody, 1 V/oct, 0 V and up).
 //   - time = time between clock pulses x division
 //   - clock: CV IN RATE jack (gate/trigger); unpatched: the sample trigger
 //   - CLOCK RATE knob: division 1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4 1 4/3 3/2 2
@@ -35,7 +36,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.4.1-beta"
+#define HIMALIA_FW_VERSION "0.5.0-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -398,6 +399,12 @@ static inline __attribute__((always_inline)) float dlyRead(const int16_t *buf, f
 //  Generative sequencer state
 //
 volatile uint32_t seq_steps_pending = 0;   // set by the audio interrupt on each trigger
+// Sequencer pitch CV on the noise side DAC output (DAC0), positive only.
+// Output stage (schematic): Vout = DAC volts x 3.397 - 6.05 V
+//   -> 0 V at DAC code ~2210, ~365 codes per volt. Fine tune here if needed.
+#define SEQ_CV_ZERO_CODE   2210.0f
+#define SEQ_CV_CODES_PER_V  365.3f
+volatile uint16_t seq_cv_code = 2210;
 static uint16_t   seq_reg   = 0xB3A5;      // 16 bit loop, the "Turing machine" register
 static uint32_t   seq_pos   = 0;           // step counter
 static uint32_t   seq_rng   = 0x12345678;  // xorshift random
@@ -445,6 +452,13 @@ static void seqStep(uint16_t change_adc, bool scaleB) {
 
   // voice ratios relative to the MAIN TUNE pitch
   spreads[0] = semisToRatio(seqSemis(mel, scaleB));             // melody
+
+  // melody as 1 V/oct CV: lowest note = 0 V, only positive voltages
+  float cv = (float)seqSemis(mel, scaleB) * (1.0f / 12.0f);
+  if(cv < 0.0f) cv = 0.0f;
+  int32_t code = (int32_t)(SEQ_CV_ZERO_CODE + cv * SEQ_CV_CODES_PER_V + 0.5f);
+  if(code > 4095) code = 4095;
+  seq_cv_code = (uint16_t)code;
   spreads[1] = semisToRatio(seqSemis(mel, scaleB) - 12);        // sub octave
   spreads[2] = semisToRatio(seqSemis(mel + 2, scaleB));         // harmony (third / fourth)
   spreads[3] = semisToRatio(seqSemis(mel + 4, scaleB));         // harmony (fifth)
@@ -627,14 +641,12 @@ void renderAudio() {
     const float wet_l = odd ? (dly_prev_l + dly_out_l) * 0.5f : dly_prev_l;
     const float wet_r = odd ? (dly_prev_r + dly_out_r) * 0.5f : dly_prev_r;
 
-    float L = out * 0.75f + wet_l * 0.6f;
-    float R = wet_r * 0.8f;
+    // delay is mono now: both ping-pong sides go to SAMPLE OUT
+    float L = out * 0.75f + (wet_l + wet_r) * 0.45f;
     int32_t dl = 2048 + (int32_t)(L * 2047.0f);
-    int32_t dr = 2048 + (int32_t)(R * 2047.0f);
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
-    if(dr < 0) dr = 0;  if(dr > 4095) dr = 4095;
-    DAC->DATA[1].reg = (uint16_t)dl;   // left:  SAMPLE OUT
-    DAC->DATA[0].reg = (uint16_t)dr;   // right: noise side DAC out
+    DAC->DATA[1].reg = (uint16_t)dl;            // SAMPLE OUT: dry + echoes
+    DAC->DATA[0].reg = seq_cv_code;             // noise side DAC out: sequencer pitch CV
 
     // LED + pulse out (PA22) on every echo time
     static uint32_t beat = 0;
