@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.1-beta
+
+- **CV in rate (noise-kant) is nu de klokingang van de delay.** Gate/trigger, hoog boven ~2V. Niet ingeplugd, of 4 s geen pulsen: de delay volgt de sample-trigger.
+- Feedback staat vast op 45%.
+
 ## v0.3.0-beta
 
 **Digitale noise → stereo ping-pong delay** op de wavetable/LPG-stem

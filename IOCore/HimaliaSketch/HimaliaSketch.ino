@@ -23,9 +23,10 @@
 //
 //  The digital noise / S&H is a stereo ping-pong delay on the wavetable:
 //   - left = SAMPLE OUT (dry + echoes), right = noise side DAC out (echoes)
-//   - time = time between triggers x division
+//   - time = time between clock pulses x division
+//   - clock: CV IN RATE jack (gate/trigger); unpatched: the sample trigger
 //   - CLOCK RATE knob: division 1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4 1 4/3 3/2 2
-//   - CV IN RATE: feedback (unpatched 45%)
+//   - feedback fixed at 45%
 //   - rate LED + PA22: pulse on every echo time
 //
 //  Other changes against the factory firmware:
@@ -34,7 +35,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.3.0-beta"
+#define HIMALIA_FW_VERSION "0.3.1-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -363,8 +364,9 @@ uint32_t          lpg_hold  = 0;        // minimum gate length for short trigger
 //    input ......... wavetable / LPG output
 //    left .......... SAMPLE OUT (DAC1): dry + left echoes
 //    right ......... noise side DAC output (DAC0): right echoes
-//    time .......... clock period (time between triggers) x division
-//    CLOCK RATE .... division, CV IN RATE: feedback (unpatched: 45%)
+//    time .......... clock period (time between clock pulses) x division
+//    clock ......... CV IN RATE jack, or the sample trigger when unpatched
+//    CLOCK RATE .... division; feedback fixed 45%
 //  Delay lines run at half rate (24 kHz) so they hold up to 2 seconds.
 //
 #define DLY_LEN 48000                      // samples per channel at 24 kHz = 2 s
@@ -377,6 +379,8 @@ volatile float    dly_fb     = 0.45f;      // feedback
 static float      dly_lp_l = 0, dly_lp_r = 0;     // feedback tone filters
 static float      dly_out_l = 0, dly_out_r = 0;   // wet outputs
 volatile uint32_t clk_period = 24000;      // 48 kHz ticks between triggers (default 0.5 s)
+volatile uint32_t audio_tick = 0;          // counts 48 kHz audio ticks
+volatile bool     ext_clk_active = false;  // delay clocked from the noise CV jack
 volatile uint32_t dly_led    = 0;          // LED / pulse out on each echo time
 
 static inline __attribute__((always_inline)) float dlyRead(const int16_t *buf, float d) {
@@ -503,8 +507,7 @@ static uint16_t selectHyst(int32_t v, int32_t lo, int32_t hi, int32_t maxStep, u
 void renderAudio() {
   //  PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
 
-  static uint32_t tick = 0;      // audio tick counter (clock measurement)
-  tick++;
+  const uint32_t tick = ++audio_tick;   // audio tick counter (clock measurement)
 
   // SuperSQUARE Ramps generate binary pattern
   bool sqr_pins[6];
@@ -546,7 +549,7 @@ void renderAudio() {
       static uint32_t last_edge = 0;
       const uint32_t per = tick - last_edge;
       last_edge = tick;
-      if(per > 480 && per < 4u * 48000u) clk_period = per;   // 10 ms ... 4 s, else keep last
+      if(!ext_clk_active && per > 480 && per < 4u * 48000u) clk_period = per;   // 10 ms ... 4 s
     }
     previous_trigger=true;
     lpg_hold = 144;                     // 3 ms: short triggers still open the gate fully
@@ -650,8 +653,24 @@ void renderAudio() {
 
 void loop() {
 
-  // Delay: CLOCK RATE knob = division of the clock, CV IN RATE = feedback
-  uint16_t fb_jack  = adc51.readAnalog(PB01,ADC_Channel13,false);
+  // Delay: CLOCK RATE knob = division of the clock
+  //        CV IN RATE jack = delay clock input (gate/trigger, > ~2V).
+  //        Unpatched or no pulses for 4 s: the delay follows the sample trigger.
+  uint16_t clk_jack = adc51.readAnalog(PB01,ADC_Channel13,false);
+  {
+    static bool     high = false;
+    static uint32_t last = 0;
+    const uint32_t  now  = audio_tick;
+    if(!high && clk_jack > 1600 && clk_jack < 3900){          // rising edge (>4000 = unpatched)
+      high = true;
+      const uint32_t per = now - last;
+      if(last != 0 && per > 480 && per < 4u * 48000u){ clk_period = per; ext_clk_active = true; }
+      last = now;
+    } else if(high && (clk_jack < 900 || clk_jack >= 4000)){
+      high = false;
+    }
+    if(ext_clk_active && (now - last) > 4u * 48000u) ext_clk_active = false;   // clock stopped
+  }
   uint16_t div_poti = adc51.readAnalog(PB02,ADC_Channel14,false);
   static const float divisions[12] = { 1.0f/8, 1.0f/6, 1.0f/4, 1.0f/3, 3.0f/8, 1.0f/2,
                                        2.0f/3, 3.0f/4, 1.0f,   4.0f/3, 3.0f/2, 2.0f };
@@ -661,12 +680,7 @@ void loop() {
   while(d > (float)(DLY_LEN - 4)) d *= 0.5f;                  // too long: half the time
   if(d < 2.0f) d = 2.0f;
   dly_target = d;
-  if(fb_jack > 4000){
-    dly_fb = 0.45f;                                           // unpatched
-  } else {
-    float f = (float)fb_jack * (0.92f / 4000.0f);
-    dly_fb = (f > 0.92f) ? 0.92f : f;
-  }
+  dly_fb = 0.45f;                                             // fixed feedback
 
   // -----------------------------------------------------------------
   // SAMPLE Speed

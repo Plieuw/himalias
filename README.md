@@ -82,9 +82,10 @@ A clocked stereo ping-pong delay on the wavetable / LPG voice.
 
 | control / jack              | function                                   |
 |-----------------------------|--------------------------------------------|
-| SAMPLE TRIGGER in           | clock: delay time follows the time between triggers |
+| CV IN RATE                  | clock in: delay time follows the time between pulses |
+| SAMPLE TRIGGER in           | clock when CV IN RATE is unpatched / stopped for 4 s |
 | CLOCK RATE knob             | division: 1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4 1 4/3 3/2 2 |
-| CV IN RATE                  | feedback (unpatched: 45%)                  |
+| feedback                    | fixed 45%                                  |
 | SAMPLE OUT                  | left: dry + echoes                          |
 | noise side DAC out          | right: echoes (ping-pong)                   |
 | rate LED / PA22 out         | pulse on every echo                         |
