@@ -44,9 +44,9 @@ SAMPLE OUT is now a wavetable oscillator:
 | SAMPLE TUNE knob + CV       | pitch (about 16 Hz ... 8 kHz)              |
 | SAMPLE SELECT knob + CV     | scan through the 64 waves of a table       |
 | RATCHET knob + CV           | wavetable select (8 tables)                |
-| A/B button (sample side)    | wavefolder on / off                        |
-| TRIGGER in / button         | phase reset (sync)                         |
-| BIT switch                  | 8 bit bytebeat mode (A/B = bytebeat bank)  |
+| A/B button (sample side)    | wavefolder on / off (LPG mode: short/long decay) |
+| TRIGGER in / button         | phase reset (sync); opens the LPG in LPG mode |
+| BIT switch                  | LPG mode: vactrol-style low pass gate on trigger/gate (replaces bytebeat) |
 
 Put Serum/Vital style wavetables (.wav, single-cycle frames, frame size read
 from the Serum `clm` chunk, otherwise 2048) in `wavetables/`. They are used in

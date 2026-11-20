@@ -5,9 +5,11 @@
 //   - SAMPLE TUNE knob + CV ....... pitch (exponential)
 //   - SAMPLE SELECT knob + CV ..... scan / morph through the waves of a table
 //   - RATCHET knob + CV ........... wavetable select
-//   - A/B button (sample side) .... wavefolder on / off
+//   - A/B button (sample side) .... wavefolder on / off   (LPG mode: short / long decay)
 //   - TRIGGER in / button ......... phase reset (sync), LED flashes
-//   - BIT switch .................. 8 bit bytebeat mode, as before
+//   - BIT switch .................. LPG mode: the wavetable goes through a
+//                                   low pass gate (vactrol style) that opens on
+//                                   trigger / gate. Replaces the 8 bit bytebeat mode.
 //  Wavetables come from wavetables.h, made by tools/make_wavetables.py
 //  (your own Serum/Vital style wav files + built-in tables).
 //
@@ -229,8 +231,6 @@ const float reciprocal_sr = 1.0 / samplerate;
 
 
 
-float pitches[1024];
-uint8_t sines[256];
 
 void setup() {
   //put your setup code here, to run once:
@@ -241,18 +241,6 @@ void setup() {
   DAC->DATA[0].reg = 2048;   // ca 1.5V
   DAC->DATA[1].reg = 2048;
   while (DAC->SYNCBUSY.bit.DATA0);
-
-  // gen sin Table
-  for(uint16_t i = 0 ; i < 256 ; i ++){
-    float phase = (float)i / 256.0f * PI * 2.0f;
-    sines[i] = (sin(phase) + 1.0) * 127.0f; 
-  }
-
-  // gen Table
-  for(uint16_t i = 0 ; i < 1024 ; i ++){
-    float clk_tempo_f = (float)i / 256.0f - 6.0f;
-    pitches[i] = pow(12,clk_tempo_f);
-  }
 
   Serial.begin(115200);
   // while ( !Serial ) delay(10);   // wait for native usb
@@ -323,44 +311,6 @@ class LFSR {
 LFSR lsfr1(0xA1e);
 
 
-// 8-Bit OSC Stuff
-#define OSC8BIT_PRG_COUNT 32
-typedef uint16_t (*zm8BitPrg) (uint16_t t);
-// https://git.metanohi.name/bytebeat.git/raw/c2f559b6efac4b03a0233e5797437af30601c170/clive.c
-static uint16_t render_prg0(uint16_t t){ return  t; }
-static uint16_t render_prg1(uint16_t t){ return  sines[(t>>8)]; }
-static uint16_t render_prg2(uint16_t t){ return  t*(42&t>>10); }     // viznut
-static uint16_t render_prg3(uint16_t t){ return  (t*5&t>>7)|(t*3&t>>10); }
-
-static uint16_t render_prg4(uint16_t t){ return  t|t%255|t%257; } 
-static uint16_t render_prg5(uint16_t t){ return  t>>6&1?t>>5:-t>>4; }
-static uint16_t render_prg6(uint16_t t){ return  t*(t>>9|t>>13)&16; }
-static uint16_t render_prg7(uint16_t t){ return  t*(((t>>9)^((t>>9)-1)^1)%13); }
-
-static uint16_t render_prg8(uint16_t t){  return  t*(t>>8*((t>>15)|(t>>8))&(20|(t>>19)*5>>t|(t>>3))); }
-static uint16_t render_prg9(uint16_t t){  return  t*(t>>((t>>9)|(t>>8))&(63&(t>>4))); }
-static uint16_t render_prg10(uint16_t t){ return (t>>6|t|t>>(t>>16))*10+((t>>11)&7); }
-static uint16_t render_prg11(uint16_t t){ return (t|(t>>9|t>>7))*t&(t>>11|t>>9); }
-
-static uint16_t render_prg12(uint16_t t){ return t*(((t>>12)|(t>>8))&(63&(t>>4))); }
-static uint16_t render_prg13(uint16_t t){ return t*(t^t+(t>>15|1)^(t-1280^t)>>10); }
-static uint16_t render_prg14(uint16_t t){ return (t&t%255)-(t*3&t>>13&t>>6); }
-static uint16_t render_prg15(uint16_t t){ return (t+(t>>2)|(t>>5))+(t>>3)|((t>>13)|(t>>7)|(t>>11)); }
-
-const zm8BitPrg prgList[OSC8BIT_PRG_COUNT] = {  render_prg0, render_prg1, render_prg2, render_prg3,
-                                                render_prg4, render_prg5, render_prg6, render_prg7,
-                                                render_prg8, render_prg9, render_prg10,render_prg11,
-                                                render_prg12,render_prg13,render_prg14,render_prg15,
-
-                                                render_prg0, render_prg1, render_prg2, render_prg3,
-                                                render_prg4, render_prg5, render_prg6, render_prg7,
-                                                render_prg8, render_prg9, render_prg10,render_prg11,
-                                                render_prg12,render_prg13,render_prg14,render_prg15
-                                                };
-
-
-
-
 //
 //  AUDIO RENDERER Parms
 //
@@ -372,7 +322,6 @@ volatile float spreads[6]  = { 0.0001f, 0.0001002f, 0.0001003f,0.0001007f,0.0001
 
 float thea_noise  = 0.0f;
 volatile float inc_noise   = 0.001f;
-volatile float inc_8bit   = 0.001f;
 
 // Wavetable oscillator
 volatile float    wt_inc   = 0.005f;   // phase increment per audio tick (cycles)
@@ -382,7 +331,12 @@ volatile uint32_t wt_level = 0;        // band limit level, set from pitch
 volatile float    wt_fold  = 1.0f;     // 1 = clean, up to 5 = heavily folded
 float             wt_phase = 0.0f;
 
-volatile int prg8=0;
+// Low pass gate (LPG mode)
+volatile float    lpg_decay = 0.0f;     // per-tick decay factor, set from A/B button
+float             lpg_env   = 0.0f;     // 0 ... 1, like the light in a vactrol
+float             lpg_z1    = 0.0f;     // filter states (2 x one pole)
+float             lpg_z2    = 0.0f;
+uint32_t          lpg_hold  = 0;        // minimum gate length for short triggers
 //
 //  One wavetable value, linear interpolation inside the table (-2048 ... 2047)
 //  Tables are packed 12 bit: 2 samples in 3 bytes.
@@ -488,22 +442,16 @@ void renderAudio() {
       wt_phase = 0.0f;   // sync: restart the waveform
     }
     previous_trigger=true;
+    lpg_hold = 144;                     // 3 ms: short triggers still open the gate fully
   }
+  const bool gate_on = previous_trigger || (lpg_hold > 0);
+  if(lpg_hold) lpg_hold--;
 
 
 
-  bool is_8bitchipmode = PORT->Group[PORTB].IN.reg & (1ul << 17);        // digitalRead(PB17);
+  const bool lpg_mode = !(PORT->Group[PORTB].IN.reg & (1ul << 17));   // BIT switch (PB17)
 
-  if(!is_8bitchipmode){
-    // 8 Bit OSC
-    static float t=0;
-    zm8BitPrg  callBackPrg = prgList[prg8];
-    if(t>65535.0f) t=0.0f;  {
-      t+=inc_8bit * 1024.0f;  // TODO: its wrong!!! needs callBack on phase Reset!!!!
-      // if(!DAC->SYNCBUSY.bit.DATA1)
-      DAC->DATA[1].reg = callBackPrg((uint16_t)t) << 4;
-    }
-  }else{
+  {
     // Wavetable Output
     wt_phase += wt_inc;
     if(wt_phase >= 1.0f) wt_phase -= 1.0f;
@@ -524,8 +472,20 @@ void renderAudio() {
     const float b = wtRead(wavetables[base + w1][lvl], i0, frac);
     float out = (a + (b - a) * mf) * (1.0f / 2048.0f);    // -1 ... +1
 
-    const float g = wt_fold;
-    if(g > 1.01f) out = wtFold(out * g);
+    if(lpg_mode){
+      // vactrol-style envelope: fast attack, slow decay that gets slower near the end
+      if(gate_on) lpg_env += (1.0f - lpg_env) * 0.03f;                 // ~0.7 ms attack
+      else        lpg_env -= lpg_env * lpg_decay * (0.35f + 0.65f * lpg_env);
+      // the same envelope opens the filter (2 x one pole) and the amplitude
+      const float e = lpg_env;
+      const float k = 0.004f + 0.85f * e * e;                           // ~30 Hz ... ~10 kHz
+      lpg_z1 += (out    - lpg_z1) * k;
+      lpg_z2 += (lpg_z1 - lpg_z2) * k;
+      out = lpg_z2 * (0.15f + 0.85f * e) * e;
+    } else {
+      const float g = wt_fold;
+      if(g > 1.01f) out = wtFold(out * g);
+    }
 
     int32_t dac = 2048 + (int32_t)(out * 2047.0f);
     if(dac < 0) dac = 0;
@@ -566,12 +526,6 @@ void loop() {
   if(sample_pitch_sum > 4095){
     sample_pitch_sum = 4095;
   }
-  // 8Bit ChipMusic Speed (same curve as the factory firmware)
-  float clk_8bit_f = pitches[(sample_pitch_sum >> 2) & 0x03ff];  // Limit 1024 array size
-  if(clk_8bit_f>1.0f) clk_8bit_f=1.0f;
-  if(clk_8bit_f<0.000001f) clk_8bit_f=0.000001f;
-  inc_8bit = clk_8bit_f;
-
   // Wavetable pitch: WT_PITCH_OCTAVES octaves over the full ADC range,
   // starting at WT_PITCH_LOW_HZ. Not calibrated to exact 1V/oct.
   const float WT_PITCH_LOW_HZ  = 16.35f;   // C0
@@ -805,14 +759,7 @@ void loop() {
   if(cv_sample_select_adc < 4000 ) // if jack is conneced (no normalized)
     prg8_smpl_select_adc+=cv_sample_select_adc;
   
-  // 8 bit program select: 16 steps per bank, with hysteresis (as before)
-  static uint16_t smpl_state = 0;
-  int16_t prg8_smpl_select    = selectHyst(prg8_smpl_select_adc,310,3750, 15, smpl_state);
-
-  uint16_t smpl_bank_offset=0;
-  bool bankB = !(PORT->Group[PORTA].IN.reg & (1ul << 20));   // PA20 button A/B Bank
-  if(bankB) smpl_bank_offset=16;
-  prg8 = (prg8_smpl_select + smpl_bank_offset) & 0x1f;
+  bool bankB = !(PORT->Group[PORTA].IN.reg & (1ul << 20));   // PA20 button A/B
 
   // Wavetable morph: continuous 0 ... 15, lightly smoothed against zipper noise
   float morph_target = (float)((int32_t)prg8_smpl_select_adc - 310) * ((float)(WT_WAVES - 1) / (3750.0f - 310.0f));
@@ -822,8 +769,10 @@ void loop() {
   morph_smooth += (morph_target - morph_smooth) * 0.1f;
   wt_morph = morph_smooth;
 
-  // A/B button -> wavefolder on / off
+  // A/B button -> wavefolder on / off, in LPG mode: short / long decay
   wt_fold = bankB ? 2.5f : 1.0f;
+  // decay factor per audio tick; ~0.25 s (A) or ~1.2 s (B) until it is quiet
+  lpg_decay = bankB ? (1.0f / (0.30f * samplerate)) : (1.0f / (0.06f * samplerate));
 
   // Ratchet knob -> wavetable select, with hysteresis
   uint16_t table_adc = adc51.readAnalog(PB07,ADC_Channel9,true);
@@ -835,7 +784,7 @@ void loop() {
   static int dsbug = 0;
   dsbug++;
   if(!(dsbug % 500)){
-    Serial.print(prg8,DEC);
+    Serial.print(wt_table,DEC);
     Serial.print(" ");
     Serial.print(prg8_smpl_select);
     Serial.print(" ");
