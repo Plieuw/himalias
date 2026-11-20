@@ -77,6 +77,21 @@ Voices: melody, sub octave, two harmonies, octave up and a drone that moves
 now and then. Per step the register decides which voices sound, their pulse
 width and which filter caps are switched in.
 
+### stereo delay (replaces the digital noise / sample & hold)
+A clocked stereo ping-pong delay on the wavetable / LPG voice.
+
+| control / jack              | function                                   |
+|-----------------------------|--------------------------------------------|
+| SAMPLE TRIGGER in           | clock: delay time follows the time between triggers |
+| CLOCK RATE knob             | division: 1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4 1 4/3 3/2 2 |
+| CV IN RATE                  | feedback (unpatched: 45%)                  |
+| SAMPLE OUT                  | left: dry + echoes                          |
+| noise side DAC out          | right: echoes (ping-pong)                   |
+| rate LED / PA22 out         | pulse on every echo                         |
+
+Up to 2 s per side (delay lines at 24 kHz); longer times are halved.
+The analog noise section is unchanged.
+
 ### flash size
 The Himalia uses an ATSAMD51J20A with 1 MB flash. The old linker script only
 allowed 512 KB (copied from the Doppler, which has a 512 KB chip), which made

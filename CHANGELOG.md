@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.0-beta
+
+**Digitale noise → stereo ping-pong delay** op de wavetable/LPG-stem
+| control / jack | functie |
+|---|---|
+| Sample trigger in | klok: delaytijd volgt de tijd tussen triggers |
+| Clock rate-knop | deling: 1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4 1 4/3 3/2 2 |
+| CV in rate | feedback (niet ingeplugd: 45%) |
+| Sample out | links: droog + echo's |
+| DAC-uitgang noise-kant | rechts: echo's (ping-pong) |
+| Rate-ledje | knippert op elke echo |
+
+Max 2 s per kant; langere tijden worden gehalveerd. De analoge noise blijft zoals hij was.
+
 ## v0.2.0-beta
 
 **Squares: generatieve sequencer** (vervangt de spread-presets)

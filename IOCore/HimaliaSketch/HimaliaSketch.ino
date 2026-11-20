@@ -21,13 +21,20 @@
 //   - 6 voices: melody, sub octave, two harmonies, octave up, drone; the register
 //     decides per step which voices sound, their pulse width and filter cap
 //
+//  The digital noise / S&H is a stereo ping-pong delay on the wavetable:
+//   - left = SAMPLE OUT (dry + echoes), right = noise side DAC out (echoes)
+//   - time = time between triggers x division
+//   - CLOCK RATE knob: division 1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4 1 4/3 3/2 2
+//   - CV IN RATE: feedback (unpatched 45%)
+//   - rate LED + PA22: pulse on every echo time
+//
 //  Other changes against the factory firmware:
 //   - linker scripts use the full 1 MB flash of the ATSAMD51J20A
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.2.0-beta"
+#define HIMALIA_FW_VERSION "0.3.0-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -352,6 +359,37 @@ float             lpg_z1    = 0.0f;     // filter states (2 x one pole)
 float             lpg_z2    = 0.0f;
 uint32_t          lpg_hold  = 0;        // minimum gate length for short triggers
 //
+//  Stereo ping-pong delay (replaces the digital noise / S&H)
+//    input ......... wavetable / LPG output
+//    left .......... SAMPLE OUT (DAC1): dry + left echoes
+//    right ......... noise side DAC output (DAC0): right echoes
+//    time .......... clock period (time between triggers) x division
+//    CLOCK RATE .... division, CV IN RATE: feedback (unpatched: 45%)
+//  Delay lines run at half rate (24 kHz) so they hold up to 2 seconds.
+//
+#define DLY_LEN 48000                      // samples per channel at 24 kHz = 2 s
+static int16_t    dly_l[DLY_LEN];
+static int16_t    dly_r[DLY_LEN];
+static uint32_t   dly_w = 0;               // write position
+volatile float    dly_target = 6000.0f;    // wanted delay in 24 kHz samples
+static float      dly_time   = 6000.0f;    // smoothed (tape-like glide on changes)
+volatile float    dly_fb     = 0.45f;      // feedback
+static float      dly_lp_l = 0, dly_lp_r = 0;     // feedback tone filters
+static float      dly_out_l = 0, dly_out_r = 0;   // wet outputs
+volatile uint32_t clk_period = 24000;      // 48 kHz ticks between triggers (default 0.5 s)
+volatile uint32_t dly_led    = 0;          // LED / pulse out on each echo time
+
+static inline __attribute__((always_inline)) float dlyRead(const int16_t *buf, float d) {
+  float pos = (float)dly_w - d;
+  if(pos < 0.0f) pos += (float)DLY_LEN;
+  uint32_t i0 = (uint32_t)pos;
+  if(i0 >= DLY_LEN) i0 -= DLY_LEN;
+  const uint32_t i1 = (i0 + 1 < DLY_LEN) ? i0 + 1 : 0;
+  const float f = pos - (float)(uint32_t)pos;
+  return ((float)buf[i0] + ((float)buf[i1] - (float)buf[i0]) * f) * (1.0f / 32768.0f);
+}
+
+//
 //  Generative sequencer state
 //
 volatile uint32_t seq_steps_pending = 0;   // set by the audio interrupt on each trigger
@@ -465,26 +503,8 @@ static uint16_t selectHyst(int32_t v, int32_t lo, int32_t hi, int32_t maxStep, u
 void renderAudio() {
   //  PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
 
-  // Noise / S/H Output
-  thea_noise+=inc_noise;
-  if(thea_noise>1.0f){
-    thea_noise-=2.0f;
-    // if(!DAC->SYNCBUSY.bit.DATA0)    
-    DAC->DATA[0].reg = lsfr1.next();
-
-    static uint16_t subdiv=0;
-    subdiv++;
-
-    if(!(subdiv % 4)){
-      static bool noise_led=false;
-      noise_led=!noise_led;
-      if(noise_led)  PORT->Group[PORTB].OUTCLR.reg = 1ul << 0;  else   PORT->Group[PORTB].OUTSET.reg = 1ul << 0;    // LED
-      if(noise_led)  PORT->Group[PORTA].OUTCLR.reg = 1ul << 22; else   PORT->Group[PORTA].OUTSET.reg = 1ul << 22;   // SQUARE OUT NOISE
-    }
-  }
-
-
-
+  static uint32_t tick = 0;      // audio tick counter (clock measurement)
+  tick++;
 
   // SuperSQUARE Ramps generate binary pattern
   bool sqr_pins[6];
@@ -523,6 +543,10 @@ void renderAudio() {
     if(!previous_trigger){          // check for edge
       wt_phase = 0.0f;   // sync: restart the waveform
       seq_steps_pending++;  // clock the squares sequencer
+      static uint32_t last_edge = 0;
+      const uint32_t per = tick - last_edge;
+      last_edge = tick;
+      if(per > 480 && per < 4u * 48000u) clk_period = per;   // 10 ms ... 4 s, else keep last
     }
     previous_trigger=true;
     lpg_hold = 144;                     // 3 ms: short triggers still open the gate fully
@@ -570,10 +594,51 @@ void renderAudio() {
       if(g > 1.01f) out = wtFold(out * g);
     }
 
-    int32_t dac = 2048 + (int32_t)(out * 2047.0f);
-    if(dac < 0) dac = 0;
-    if(dac > 4095) dac = 4095;
-    DAC->DATA[1].reg = (uint16_t)dac;
+    // ---- stereo ping-pong delay, processed every 2nd tick (24 kHz)
+    static float in_acc = 0.0f;
+    static bool  odd = false;
+    in_acc += out;
+    odd = !odd;
+    if(!odd){
+      const float in = in_acc * 0.5f;
+      in_acc = 0.0f;
+      dly_time += (dly_target - dly_time) * 0.0004f;          // glide when the time changes
+      const float rl = dlyRead(dly_l, dly_time);
+      const float rr = dlyRead(dly_r, dly_time);
+      dly_lp_l += (rl - dly_lp_l) * 0.45f;                      // darker repeats (~4 kHz)
+      dly_lp_r += (rr - dly_lp_r) * 0.45f;
+      const float fb = dly_fb;
+      float wl = in + dly_lp_r * fb;                            // ping: right feeds left
+      float wr = dly_lp_l;                                      // pong: left feeds right
+      if(wl >  0.999f) wl =  0.999f;  if(wl < -0.999f) wl = -0.999f;
+      if(wr >  0.999f) wr =  0.999f;  if(wr < -0.999f) wr = -0.999f;
+      dly_l[dly_w] = (int16_t)(wl * 32767.0f);
+      dly_r[dly_w] = (int16_t)(wr * 32767.0f);
+      if(++dly_w >= DLY_LEN) dly_w = 0;
+      dly_out_l = rl;
+      dly_out_r = rr;
+    }
+
+    float L = out * 0.75f + dly_out_l * 0.6f;
+    float R = dly_out_r * 0.8f + dly_out_l * 0.15f;
+    int32_t dl = 2048 + (int32_t)(L * 2047.0f);
+    int32_t dr = 2048 + (int32_t)(R * 2047.0f);
+    if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
+    if(dr < 0) dr = 0;  if(dr > 4095) dr = 4095;
+    DAC->DATA[1].reg = (uint16_t)dl;   // left:  SAMPLE OUT
+    DAC->DATA[0].reg = (uint16_t)dr;   // right: noise side DAC out
+
+    // LED + pulse out (PA22) on every echo time
+    static uint32_t beat = 0;
+    if(++beat >= (uint32_t)(dly_time * 2.0f)){ beat = 0; dly_led = 1200; }   // 25 ms flash
+    if(dly_led){
+      dly_led--;
+      PORT->Group[PORTB].OUTSET.reg = 1ul << 0;
+      PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
+    } else {
+      PORT->Group[PORTB].OUTCLR.reg = 1ul << 0;
+      PORT->Group[PORTA].OUTCLR.reg = 1ul << 22;
+    }
   }
 
   // PORT->Group[PORTA].OUTCLR.reg = 1ul << 22;
@@ -585,18 +650,23 @@ void renderAudio() {
 
 void loop() {
 
-  // S/H Speed -------------------------------------------------------
-
-  uint16_t noise_pitch_jack = adc51.readAnalog(PB01,ADC_Channel13,false);      // Buchse #2 (erste Digitale) Signal: Digital_Noise_Pitch normalized 12v
-  uint16_t noise_pitch_poti = adc51.readAnalog(PB02,ADC_Channel14,false);      // Poti #2  Signal: Manual_Digital_Noise_Pitch
-  uint32_t noise_pitch_sum = ((noise_pitch_poti + noise_pitch_jack) );
-  if(noise_pitch_jack>4000){  // if is connected
-     noise_pitch_sum = noise_pitch_poti;
+  // Delay: CLOCK RATE knob = division of the clock, CV IN RATE = feedback
+  uint16_t fb_jack  = adc51.readAnalog(PB01,ADC_Channel13,false);
+  uint16_t div_poti = adc51.readAnalog(PB02,ADC_Channel14,false);
+  static const float divisions[12] = { 1.0f/8, 1.0f/6, 1.0f/4, 1.0f/3, 3.0f/8, 1.0f/2,
+                                       2.0f/3, 3.0f/4, 1.0f,   4.0f/3, 3.0f/2, 2.0f };
+  static uint16_t div_state = 8;
+  const uint16_t div_idx = selectHyst(div_poti, 100, 4000, 11, div_state);
+  float d = (float)clk_period * 0.5f * divisions[div_idx];   // in 24 kHz samples
+  while(d > (float)(DLY_LEN - 4)) d *= 0.5f;                  // too long: half the time
+  if(d < 2.0f) d = 2.0f;
+  dly_target = d;
+  if(fb_jack > 4000){
+    dly_fb = 0.45f;                                           // unpatched
+  } else {
+    float f = (float)fb_jack * (0.92f / 4000.0f);
+    dly_fb = (f > 0.92f) ? 0.92f : f;
   }
-
-  if(noise_pitch_sum> 4095) noise_pitch_sum= 4095;
-  inc_noise = adc51.adcToInc[noise_pitch_sum] * 4.0f;
-  if(inc_noise> 0.99)inc_noise=0.99;
 
   // -----------------------------------------------------------------
   // SAMPLE Speed
