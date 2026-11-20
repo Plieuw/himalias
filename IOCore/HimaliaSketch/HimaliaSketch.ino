@@ -35,7 +35,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.4.0-beta"
+#define HIMALIA_FW_VERSION "0.4.1-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -378,6 +378,7 @@ static float      dly_time   = 6000.0f;    // smoothed (tape-like glide on chang
 volatile float    dly_fb     = 0.45f;      // feedback
 static float      dly_lp_l = 0, dly_lp_r = 0;     // feedback tone filters
 static float      dly_out_l = 0, dly_out_r = 0;   // wet outputs
+static float      dly_prev_l = 0, dly_prev_r = 0; // previous wet outputs (interpolation)
 volatile uint32_t clk_period = 24000;      // 48 kHz ticks between triggers (default 0.5 s)
 volatile uint32_t audio_tick = 0;          // counts 48 kHz audio ticks
 volatile bool     ext_clk_active = false;  // delay clocked from the noise CV jack
@@ -618,12 +619,16 @@ void renderAudio() {
       dly_l[dly_w] = (int16_t)(wl * 32767.0f);
       dly_r[dly_w] = (int16_t)(wr * 32767.0f);
       if(++dly_w >= DLY_LEN) dly_w = 0;
-      dly_out_l = rl;
-      dly_out_r = rr;
+      dly_prev_l = dly_out_l;  dly_prev_r = dly_out_r;
+      dly_out_l = rl;          dly_out_r = rr;
     }
+    // linear interpolation between the 24 kHz delay samples (one 24 kHz sample
+    // late): prev, halfway, next, halfway ... no stair steps
+    const float wet_l = odd ? (dly_prev_l + dly_out_l) * 0.5f : dly_prev_l;
+    const float wet_r = odd ? (dly_prev_r + dly_out_r) * 0.5f : dly_prev_r;
 
-    float L = out * 0.75f + dly_out_l * 0.6f;
-    float R = dly_out_r * 0.8f + dly_out_l * 0.15f;
+    float L = out * 0.75f + wet_l * 0.6f;
+    float R = wet_r * 0.8f;
     int32_t dl = 2048 + (int32_t)(L * 2047.0f);
     int32_t dr = 2048 + (int32_t)(R * 2047.0f);
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
@@ -693,7 +698,13 @@ void loop() {
   float d = (float)clk_period * 0.5f * divisions[div_idx];   // in 24 kHz samples
   while(d > (float)(DLY_LEN - 4)) d *= 0.5f;                  // too long: half the time
   if(d < 2.0f) d = 2.0f;
-  dly_target = d;
+  // ignore small clock jitter (< 2%): otherwise every tiny tempo wobble
+  // bends the pitch of the echoes
+  {
+    const float cur = dly_target;
+    const float rel = (d > cur) ? (d - cur) / cur : (cur - d) / cur;
+    if(rel > 0.02f) dly_target = d;
+  }
   dly_fb = 0.45f;                                             // fixed feedback
 
   // -----------------------------------------------------------------

@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.1-beta
+
+- **Delay rechts klinkt schoner:** de echo's worden geïnterpoleerd in plaats van getrapt (geen metaalachtige spiegeltonen meer), kleine tempo-schommelingen van de klok (< 2%) veranderen de delaytijd niet meer (geen jankende toonhoogte), en er lekt geen linker echo meer naar rechts.
+
 ## v0.4.0-beta
 
 - **Wavetables nagelopen:** (bijna) stille frames worden overgeslagen, plotseling zachte frames worden opgehaald en frames die in fase omgedraaid zijn worden teruggedraaid. Scannen heeft geen plotselinge gaten meer; geleidelijke verlopen blijven.
