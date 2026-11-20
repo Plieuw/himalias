@@ -35,7 +35,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.9.0-beta"
+#define HIMALIA_FW_VERSION "0.9.1-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"

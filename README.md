@@ -42,7 +42,7 @@ SAMPLE OUT is now a wavetable oscillator:
 | control                     | function                                   |
 |-----------------------------|--------------------------------------------|
 | SAMPLE TUNE knob + CV       | pitch: knob 16 Hz ... 8 kHz, CV -10 ... +10 V at 1 V/oct |
-| SAMPLE SELECT knob + CV     | scan through the 48 waves; CV -10 ... +10 V = whole table |
+| SAMPLE SELECT knob + CV     | scan through the 46 waves; CV -10 ... +10 V = whole table |
 | RATCHET knob + CV           | wavetable select (10 tables)               |
 | A/B button (sample side)    | LPG mode: short / long decay               |
 | CLOCK RATE knob             | wavefolder after the LPG: clean ... 6 folds |
@@ -51,9 +51,10 @@ SAMPLE OUT is now a wavetable oscillator:
 
 Put Serum/Vital style wavetables (.wav, single-cycle frames, frame size read
 from the Serum `clm` chunk, otherwise 2048) in `wavetables/`. They are used in
-file name order, so prefix them `01_`, `02_` ... Default 10 tables of 48 waves
-(packed 12 bit, 945 KB); other layouts with `--tables` / `--waves`, e.g.
-8 x 60. Free slots get the built-in "basic" (sine > triangle > saw > square >
+file name order, so prefix them `01_`, `02_` ... Default 10 tables of 46 waves
+(packed 12 bit, 906 KB); other layouts with `--tables` / `--waves`, e.g.
+8 x 57. The real limit is the bootloader's USB drive: the .uf2 (about twice
+the firmware size) must be smaller than 1,961,472 bytes. Free slots get the built-in "basic" (sine > triangle > saw > square >
 pulse) and "formant" tables. Frames are picked evenly from each file. Then in docker:
 ```
 pip3 install numpy               # once, makes the converter fast (optional)
@@ -119,7 +120,7 @@ scripts in `IOCore/variant_IOCore/linker_scripts` now use the full 1 MB
 | wavetables, 2 tables          | ~181 KB       |
 | wavetables, 16 x 16 (16 bit)  | ~690 KB       |
 | wavetables, 8 x 64 (12 bit)   | ~820 KB       |
-| wavetables, 10 x 48, 7 levels | ~993 KB       |
+| wavetables, 10 x 46, 7 levels | ~952 KB (.uf2 1.91 MB, max 1.96 MB) |
 
 ### here is the uf2 bootloader for the samd51
 https://github.com/noscene/uf2-samdx1

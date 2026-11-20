@@ -3,10 +3,12 @@
 Himalia wavetable generator -> IOCore/HimaliaSketch/wavetables.h
 
 Up to --tables wavetables (default 10) of --waves single-cycle waves each
-(default 48), stored as packed 12 bit (the resolution of the DAC).
+(default 46), stored as packed 12 bit (the resolution of the DAC).
   - RATCHET knob picks the table, SAMPLE SELECT morphs through its waves.
-  Flash budget: tables x waves x 2016 bytes must stay below ~965 KB,
-  e.g. 10 x 48 (945 KB) or 8 x 60 (945 KB).
+  Size budget: tables x waves x 2016 bytes must stay below ~930 KB. The limit
+  is not the flash but the bootloader's USB drive: it only has 1,961,472 bytes
+  free, so the .uf2 (twice the firmware size) must fit in that.
+  e.g. 10 x 46 (906 KB) or 8 x 57 (898 KB).
 
 Sources:
   every *.wav in the wavetables folder, sorted by file name (prefix them with
@@ -38,7 +40,7 @@ try:
 except ImportError:
     np = None
 
-WAVES = 48                          # waves per table (--waves)
+WAVES = 46                          # waves per table (--waves)
 MAX_TABLES = 10                     # (--tables)
 MAXH = 127                          # harmonics in the full-band version
 # one band-limited version per octave. The low versions get many more points
@@ -246,15 +248,15 @@ def main():
     ap.add_argument("--sketch", default=DEF_SKETCH)
     ap.add_argument("--frame", type=int, default=2048, help="frame size when the wav has no Serum clm chunk")
     ap.add_argument("--tables", type=int, default=MAX_TABLES, help="max number of tables (default 10)")
-    ap.add_argument("--waves", type=int, default=WAVES, help="waves per table (default 48)")
+    ap.add_argument("--waves", type=int, default=WAVES, help="waves per table (default 46)")
     ap.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-level", dest="level", action="store_false",
                     help="keep the original loudness of every frame (no leveling / flipping)")
     a = ap.parse_args()
     WAVES, MAX_TABLES = a.waves, a.tables
     budget = MAX_TABLES * WAVES * WAVE_BYTES
-    if budget > 990000 and not a.force:
-        raise SystemExit("too big: %d tables x %d waves = %d KB (max ~965 KB)" % (MAX_TABLES, WAVES, budget // 1024))
+    if budget > 930000 and not a.force:
+        raise SystemExit("too big: %d tables x %d waves = %d KB (max ~908 KB, the .uf2 must fit on the bootloader drive)" % (MAX_TABLES, WAVES, budget // 1024))
 
     tables = []
     files = sorted(glob.glob(os.path.join(a.dir, "*.wav")))

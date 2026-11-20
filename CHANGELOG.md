@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.1-beta
+
+- **Past weer op het HIMALIA-station:** v0.9.0 was als .uf2 (1,99 MB) groter dan de vrije ruimte op de nepschijf van de bootloader (1,96 MB), dus Windows weigerde te kopiëren. Nu 46 golfvormen per tabel: .uf2 is 1,91 MB.
+- De converter waarschuwt voortaan als het te groot wordt.
+
 ## v0.9.0-beta
 
 - **10 wavetables** in plaats van 8 (erbij: Harmonic_Morph en de ingebouwde "basic"), elk **48 golfvormen**.
