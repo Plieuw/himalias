@@ -23,7 +23,7 @@
 //
 //  The digital noise / S&H is a ping-pong delay on the wavetable, mixed to
 //  SAMPLE OUT. The noise side DAC out carries the sequencer pitch CV
-//  (melody, 1 V/oct, 0 V and up).
+//  (melody, 1 V/oct; SQUARES MAIN TUNE sets the base, -5 V fully left).
 //   - time = time between clock pulses x division
 //   - clock: CV IN RATE jack (gate/trigger); unpatched: the sample trigger
 //   - CLOCK RATE knob: division 1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4 1 4/3 3/2 2
@@ -36,7 +36,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.5.0-beta"
+#define HIMALIA_FW_VERSION "0.5.1-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -405,6 +405,10 @@ volatile uint32_t seq_steps_pending = 0;   // set by the audio interrupt on each
 #define SEQ_CV_ZERO_CODE   2210.0f
 #define SEQ_CV_CODES_PER_V  365.3f
 volatile uint16_t seq_cv_code = 2210;
+static float      seq_mel_volts = 0.0f;    // melody above the lowest note (1 V/oct)
+#define SEQ_CV_MIN_V      (-5.0f)          // knob fully left
+#define SEQ_CV_MAX_V      ( 5.1f)          // highest voltage the output stage can make
+#define SEQ_MEL_RANGE_V   (22.0f / 12.0f)  // highest melody note above the lowest
 static uint16_t   seq_reg   = 0xB3A5;      // 16 bit loop, the "Turing machine" register
 static uint32_t   seq_pos   = 0;           // step counter
 static uint32_t   seq_rng   = 0x12345678;  // xorshift random
@@ -453,12 +457,8 @@ static void seqStep(uint16_t change_adc, bool scaleB) {
   // voice ratios relative to the MAIN TUNE pitch
   spreads[0] = semisToRatio(seqSemis(mel, scaleB));             // melody
 
-  // melody as 1 V/oct CV: lowest note = 0 V, only positive voltages
-  float cv = (float)seqSemis(mel, scaleB) * (1.0f / 12.0f);
-  if(cv < 0.0f) cv = 0.0f;
-  int32_t code = (int32_t)(SEQ_CV_ZERO_CODE + cv * SEQ_CV_CODES_PER_V + 0.5f);
-  if(code > 4095) code = 4095;
-  seq_cv_code = (uint16_t)code;
+  // melody as 1 V/oct above the lowest note; the pitch knob adds the base (loop)
+  seq_mel_volts = (float)seqSemis(mel, scaleB) * (1.0f / 12.0f);
   spreads[1] = semisToRatio(seqSemis(mel, scaleB) - 12);        // sub octave
   spreads[2] = semisToRatio(seqSemis(mel + 2, scaleB));         // harmony (third / fourth)
   spreads[3] = semisToRatio(seqSemis(mel + 4, scaleB));         // harmony (fifth)
@@ -755,6 +755,17 @@ void loop() {
 
 
   float inc_sqr = adc51.adcToInc[sqr_pitch_sum];
+
+  // Sequencer pitch CV out: knob fully left = -5 V for the lowest note; the
+  // knob range stops where the highest melody note reaches the top of the
+  // output (+5.1 V), so the melody is never cut off.
+  {
+    const float base = SEQ_CV_MIN_V + (float)sqr_pitch_sum * ((SEQ_CV_MAX_V - SEQ_MEL_RANGE_V - SEQ_CV_MIN_V) / 4000.0f);
+    int32_t code = (int32_t)(SEQ_CV_ZERO_CODE + (base + seq_mel_volts) * SEQ_CV_CODES_PER_V + 0.5f);
+    if(code < 0) code = 0;
+    if(code > 4095) code = 4095;
+    seq_cv_code = (uint16_t)code;
+  }
   thea_inc[0]=  spreads[0] * inc_sqr;
   thea_inc[1]=  spreads[1] * inc_sqr;
   thea_inc[2]=  spreads[2] * inc_sqr;
@@ -812,7 +823,8 @@ void loop() {
     Serial.print(" V)  scan_cv "); Serial.print(cv_sample_select_adc);
     Serial.print(" (");        Serial.print(cvVolts(cv_sample_select_adc), 2);
     Serial.print(" V)  tune_knob "); Serial.print(sample_pitch_poti);
-    Serial.print("  scan_knob "); Serial.println(prg8_smpl_select_adc);
+    Serial.print("  scan_knob "); Serial.print(prg8_smpl_select_adc);
+    Serial.print("  sqr_tune "); Serial.println(sqr_pitch_sum);
   }
 
 

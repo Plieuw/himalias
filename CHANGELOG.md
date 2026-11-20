@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.5.1-beta
+
+- **Sequencer-CV volgt de squares main tune-knop:** helemaal links begint de laagste noot op -5 V. Rechtsom schuift de hele melodie omhoog, tot de hoogste noot +5,1 V bereikt (het maximum van de uitgang). Er wordt dus nooit iets afgekapt. Een CV op de main tune-ingang telt mee.
+
 ## v0.5.0-beta
 
 - **Sequencer pitch-CV-uitgang** op de DAC-uitgang van de noise-kant: de melodienoot als 1 V/oct, laagste noot = 0 V, alleen positieve spanning (0 tot ~2 V). Patch hem bijvoorbeeld in sample tune CV, dan speelt de wavetable de sequence mee.

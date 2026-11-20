@@ -79,7 +79,7 @@ loop of bits that slowly (or quickly) mutates.
 | SQUARES MAIN TUNE + CV      | root pitch                                 |
 | SPREAD knob + CV            | change: left = loop locked, right = every step random |
 | A/B button (squares side)   | scale: A = minor pentatonic, B = natural minor |
-| noise side DAC out          | melody pitch CV, 1 V/oct, lowest note = 0 V, only positive |
+| noise side DAC out          | melody pitch CV, 1 V/oct; MAIN TUNE sets the base: fully left = -5 V, up to where the top note reaches +5.1 V (never clipped) |
 
 Voices: melody, sub octave, two harmonies, octave up and a drone that moves
 now and then. Per step the register decides which voices sound, their pulse
