@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.6.2-beta
+
+- **Squares volgen dezelfde schaal als de sequencer-CV:** 0 V = C2 (65 Hz), 1 V/oct. Main tune links: laagste noot C2, rechts: hoogste noot 5 octaven hoger. Een VCO op de CV-uitgang (afgesteld op C2 bij 0 V) speelt dus dezelfde noten als de squares.
+- Sample rate in de code gecorrigeerd naar de echte 47.619 Hz (de timer telt 126 stappen, niet 125): toonhoogte van wavetable en squares ~14 cent preciezer.
+
 ## v0.6.1-beta
 
 - **Sequencer-CV alleen positief, 0 tot +5 V:** main tune-knop helemaal links = laagste noot op 0 V, helemaal rechts = hoogste noot op +5 V. Niets wordt afgekapt.

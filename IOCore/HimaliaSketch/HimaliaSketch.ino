@@ -15,7 +15,7 @@
 //
 //  The 6 squares are a generative sequencer (Turing machine style):
 //   - clock: SAMPLE TRIGGER in / button, every trigger is one step
-//   - SQUARES MAIN TUNE knob + CV ... root pitch
+//   - SQUARES MAIN TUNE knob + CV ... root pitch, same 1 V/oct scale as the CV out
 //   - SPREAD knob + CV .............. change: left = loop locked, right = random
 //   - A/B button (squares side) ..... scale: A = minor pentatonic, B = natural minor
 //   - 6 voices: melody, sub octave, two harmonies, octave up, drone; the register
@@ -33,7 +33,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.6.1-beta"
+#define HIMALIA_FW_VERSION "0.6.2-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -240,10 +240,9 @@ void dump_sector(uint32_t sector) {
 
 
 SAMD51_ADC adc51;
-// Audio interrupt: 48MHz GCLK1 / TC_CLOCK_PRESCALER_DIV8 / period 125 = ~48kHz
-// (the old comment said DIV4 / 96kHz; the pitch tables were tuned by ear on the
-//  real timer, so the timer setup itself is left unchanged)
-const float samplerate = 48000000.0 / 8.0 / 125.0;
+// Audio interrupt: 48MHz GCLK1 / TC_CLOCK_PRESCALER_DIV8 / (PER 125 + 1)
+// = 47619 Hz. The 8 bit counter counts 0 ... 125, so one period is 126 ticks.
+const float samplerate = 48000000.0 / 8.0 / 126.0;
 const float reciprocal_sr = 1.0 / samplerate;
 
 
@@ -380,6 +379,7 @@ static float      seq_mel_volts = 0.0f;    // melody above the lowest note (1 V/
 #define SEQ_CV_MIN_V      ( 0.0f)          // knob fully left: lowest note at 0 V
 #define SEQ_CV_MAX_V      ( 5.0f)          // knob fully right: highest note at +5 V
 #define SEQ_MEL_RANGE_V   (22.0f / 12.0f)  // highest melody note above the lowest
+#define SEQ_F0_HZ         65.406f          // squares pitch at 0 V (C2)
 static uint16_t   seq_reg   = 0xB3A5;      // 16 bit loop, the "Turing machine" register
 static uint32_t   seq_pos   = 0;           // step counter
 static uint32_t   seq_rng   = 0x12345678;  // xorshift random
@@ -662,17 +662,19 @@ void loop() {
   if(sqr_pitch_sum>4000) sqr_pitch_sum=4000;
 
 
-  float inc_sqr = adc51.adcToInc[sqr_pitch_sum];
-
-  // Sequencer pitch CV out, positive only: knob fully left = lowest note at
-  // 0 V, fully right = highest note at +5 V, so the melody is never cut off.
+  // Squares pitch and sequencer CV out use the same 1 V/oct scale, so the
+  // squares and a VCO on the CV output play the same notes.
+  //   knob fully left = lowest note at 0 V = SEQ_F0_HZ
+  //   knob fully right = highest note at +5 V (5 octaves above SEQ_F0_HZ)
+  const float base = SEQ_CV_MIN_V + (float)sqr_pitch_sum * ((SEQ_CV_MAX_V - SEQ_MEL_RANGE_V - SEQ_CV_MIN_V) / 4000.0f);
   {
-    const float base = SEQ_CV_MIN_V + (float)sqr_pitch_sum * ((SEQ_CV_MAX_V - SEQ_MEL_RANGE_V - SEQ_CV_MIN_V) / 4000.0f);
     int32_t code = (int32_t)(SEQ_CV_ZERO_CODE + (base + seq_mel_volts) * SEQ_CV_CODES_PER_V + 0.5f);
     if(code < 0) code = 0;
     if(code > 4095) code = 4095;
     seq_cv_code = (uint16_t)code;
   }
+  // squares phase runs -1 ... +1, so one cycle = 2.0 of phase
+  float inc_sqr = 2.0f * SEQ_F0_HZ * exp2f(base) * reciprocal_sr;
   thea_inc[0]=  spreads[0] * inc_sqr;
   thea_inc[1]=  spreads[1] * inc_sqr;
   thea_inc[2]=  spreads[2] * inc_sqr;
