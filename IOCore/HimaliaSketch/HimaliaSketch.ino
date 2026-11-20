@@ -5,7 +5,8 @@
 //   - SAMPLE TUNE knob + CV ....... pitch (exponential)
 //   - SAMPLE SELECT knob + CV ..... scan / morph through the waves of a table
 //   - RATCHET knob + CV ........... wavetable select
-//   - A/B button (sample side) .... wavefolder on / off   (LPG mode: short / long decay)
+//   - A/B button (sample side) .... LPG mode: short / long decay
+//   - CLOCK RATE knob ............. wavefolder after the LPG: clean ... 6 folds
 //   - TRIGGER in / button ......... phase reset (sync), LED flashes
 //   - BIT switch .................. LPG mode: the wavetable goes through a
 //                                   low pass gate (vactrol style) that opens on
@@ -22,8 +23,7 @@
 //     decides per step which voices sound, their pulse width and filter cap
 //
 //  The digital noise / S&H is replaced by real oscillator sync:
-//   - CV IN RATE jack: sync input, the waveform of another module
-//   - CLOCK RATE knob: soft (left) ... hard (right) sync
+//   - CV IN RATE jack: hard sync input, the waveform of another module
 //   - rate LED: on while a sync signal comes in
 //  PA22 (former digital noise out): 5 ms trigger whenever the melody note changes.
 //  The noise side DAC out carries the sequencer pitch CV
@@ -35,7 +35,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.7.1-beta"
+#define HIMALIA_FW_VERSION "0.8.0-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -351,7 +351,7 @@ volatile float    wt_inc   = 0.005f;   // phase increment per audio tick (cycles
 volatile float    wt_morph = 0.0f;     // 0 ... WT_WAVES-1
 volatile uint32_t wt_table = 0;        // 0 ... WT_TABLES-1
 volatile uint32_t wt_level = 0;        // band limit level, set from pitch
-volatile float    wt_fold  = 1.0f;     // 1 = clean, up to 5 = heavily folded
+volatile float    wt_fold  = 1.0f;     // fold gain: 1 = clean ... 13 = 6 folds
 float             wt_phase = 0.0f;
 
 // Low pass gate (LPG mode)
@@ -364,17 +364,14 @@ uint32_t          lpg_hold  = 0;        // minimum gate length for short trigger
 //  Real oscillator sync (replaces the digital noise)
 //    CV IN RATE jack ... sync input: the waveform of another module (master).
 //                        Every rising zero crossing restarts the wavetable.
-//    CLOCK RATE knob ... soft <-> hard: right = hard sync (restart on every
-//                        master cycle), to the left the wave is only restarted
-//                        when it is already close to the end of its own cycle
-//                        (soft sync: it gets pulled along instead of cut).
+//    Hard sync: the wavetable restarts on every master cycle.
 //  The jack is sampled every audio tick on ADC0; the exact moment of the zero
 //  crossing between two samples is interpolated, so the sync stays tight.
 //
 #define SYNC_ZERO        2028      // ADC value at 0 V (same input stage as the other CV ins)
 #define SYNC_HYST          60      // must go ~0.3 V below 0 V before the next sync
 #define SYNC_UNPATCHED   4000      // normalled jack reads above this
-volatile float    sync_window = 1.0f;      // 1 = hard, small = soft
+volatile float    sync_window = 1.0f;      // 1 = hard sync (always restart)
 volatile uint32_t sync_seen   = 0;         // ticks since the last sync edge (LED)
 volatile uint32_t audio_tick = 0;          // counts 48 kHz audio ticks
 
@@ -617,10 +614,13 @@ void renderAudio() {
       lpg_z1 += (out    - lpg_z1) * k;
       lpg_z2 += (lpg_z1 - lpg_z2) * k;
       out = lpg_z2 * (0.15f + 0.85f * e) * e;
-    } else {
-      const float g = wt_fold;
-      if(g > 1.01f) out = wtFold(out * g);
     }
+
+    // wavefolder AFTER the LPG: the louder the signal, the more it folds, so a
+    // pluck starts folded and gets rounder while it dies away.
+    // gain 1 = clean, gain 13 = a full-scale wave folds 6 times per side.
+    const float g = wt_fold;
+    if(g > 1.01f) out = wtFold(out * g);
 
     int32_t dl = 2048 + (int32_t)(out * 2047.0f);
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
@@ -663,15 +663,16 @@ static inline float cvVolts(uint16_t adc) {
 
 void loop() {
 
-  // Sync: CLOCK RATE knob = soft (left) ... hard (right)
-  uint16_t sync_jack = 0;   // sampled in the audio interrupt, not here
-  uint16_t sync_poti = adc51.readAnalog(PB02,ADC_Channel14,false);
+  // CLOCK RATE knob = wavefolder: left = clean, right = 6 folds
+  uint16_t fold_poti = adc51.readAnalog(PB02,ADC_Channel14,false);
   {
-    float k = (float)sync_poti * (1.0f / 4000.0f);
+    float k = (float)fold_poti * (1.0f / 4000.0f);
     if(k > 1.0f) k = 1.0f;
-    sync_window = 0.08f + 0.92f * k * k;     // left: only the last 8% of a cycle, right: always
+    if(k < 0.03f) k = 0.0f;                    // small dead zone: really clean
+    static float g_smooth = 1.0f;
+    g_smooth += ((1.0f + 12.0f * k) - g_smooth) * 0.1f;
+    wt_fold = g_smooth;
   }
-  (void)sync_jack;
 
   // -----------------------------------------------------------------
   // SAMPLE Speed
@@ -759,8 +760,7 @@ void loop() {
   morph_smooth += (morph_target - morph_smooth) * 0.1f;
   wt_morph = morph_smooth;
 
-  // A/B button -> wavefolder on / off, in LPG mode: short / long decay
-  wt_fold = bankB ? 2.5f : 1.0f;
+  // A/B button -> LPG decay short / long (only does something in LPG mode)
   // decay factor per audio tick; ~0.25 s (A) or ~1.2 s (B) until it is quiet
   lpg_decay = bankB ? (1.0f / (0.30f * samplerate)) : (1.0f / (0.06f * samplerate));
 

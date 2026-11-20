@@ -44,7 +44,8 @@ SAMPLE OUT is now a wavetable oscillator:
 | SAMPLE TUNE knob + CV       | pitch: knob 16 Hz ... 8 kHz, CV -10 ... +10 V at 1 V/oct |
 | SAMPLE SELECT knob + CV     | scan through the 64 waves; CV -10 ... +10 V = whole table |
 | RATCHET knob + CV           | wavetable select (8 tables)                |
-| A/B button (sample side)    | wavefolder on / off (LPG mode: short/long decay) |
+| A/B button (sample side)    | LPG mode: short / long decay               |
+| CLOCK RATE knob             | wavefolder after the LPG: clean ... 6 folds |
 | TRIGGER in / button         | phase reset (sync); opens the LPG in LPG mode |
 | BIT switch                  | LPG mode: vactrol-style low pass gate on trigger/gate (replaces bytebeat) |
 
@@ -88,19 +89,14 @@ width and which filter caps are switched in.
 
 ### real oscillator sync (replaces the digital noise / sample & hold)
 Patch the waveform of another oscillator (the master) into CV IN RATE. Every
-rising zero crossing restarts the wavetable; the exact crossing time between
-two samples is interpolated, so the sync is tight. Not an effect: the
-wavetable really follows the external oscillator.
+rising zero crossing restarts the wavetable (hard sync); the exact crossing
+time between two samples is interpolated, so the sync is tight.
 
 | control                     | function                                   |
 |-----------------------------|--------------------------------------------|
-| CV IN RATE jack             | sync input (master waveform, ±10 V ok, needs to swing through 0 V) |
-| CLOCK RATE knob             | soft (left) ... hard (right) sync          |
+| CV IN RATE jack             | hard sync input (master waveform, needs to swing through 0 V) |
 | rate LED                    | on while a sync signal comes in            |
 
-Hard sync restarts the wave on every master cycle. Towards soft, the wave
-is only restarted when it is already near the end of its own cycle, so it
-gets pulled along when it is close to a multiple of the master pitch.
 The jack is sampled every audio tick on ADC0; knob readings on ADC0 are
 interleaved with it.
 

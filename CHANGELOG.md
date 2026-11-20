@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.0-beta
+
+- **Clock rate-knop = wavefolder, schoon tot 6 folds**, ná de LPG: luider = meer vouwen, dus een pluk begint gevouwen en wordt ronder terwijl hij wegsterft.
+- **Sync is altijd hard sync** (soft-stand vervalt), nog steeds via CV in rate.
+- A/B-knop (sample-kant) doet alleen nog iets in LPG-modus: korte/lange decay.
+
 ## v0.7.1-beta
 
 - **Sequencer-trigger-uitgang** op de oude digital noise out (PA22): korte trigger van 5 ms telkens als de melodie naar een andere noot gaat. Samen met de pitch-CV stuur je zo een externe stem aan.
