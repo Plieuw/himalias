@@ -36,46 +36,29 @@ to compile all and copy firmware into module.
 . /PRJ/build.sh 
 ```
 
-### wavetable oscillator (replaces the sample player)
-SAMPLE OUT is now a wavetable oscillator:
+### resonator voice (replaces the sample player)
+SAMPLE OUT is a physical-modelling resonator with five models
+(`IOCore/HimaliaSketch/resonators.h`).
 
 | control                     | function                                   |
 |-----------------------------|--------------------------------------------|
-| SAMPLE TUNE knob + CV       | pitch: knob 16 Hz ... 8 kHz, CV -10 ... +10 V at 1 V/oct |
-| SAMPLE SELECT knob + CV     | scan through the 46 waves; CV -10 ... +10 V = whole table |
-| RATCHET knob + CV           | wavetable select (10 tables)               |
-| A/B button (sample side)    | LPG mode: short / long decay               |
-| CLOCK RATE knob             | wavefolder after the LPG: clean ... 6 folds |
-| TRIGGER in / button         | phase reset (sync); opens the LPG in LPG mode |
-| BIT switch                  | LPG mode: vactrol-style low pass gate on trigger/gate (replaces bytebeat) |
+| RATCHET knob + CV           | model: string, bar/marimba, bell/glass, drum, flute/brass |
+| SAMPLE TUNE knob + CV       | pitch: knob 7 octaves from 27.5 Hz, CV -10 ... +10 V at 1 V/oct |
+| SAMPLE SELECT knob + CV     | timbre, per model (see below)              |
+| TRIGGER in / button         | strike; the wind model blows while the gate is held |
+| A/B button (sample side)    | decay short / long                         |
+| BIT switch                  | bow / blow: excite continuously while the gate is held |
+| CV IN RATE jack             | external audio excites the resonator (like Rings) |
+| CLOCK RATE knob             | wavefolder after the resonator: clean ... 6 folds |
+| rate LED                    | on while external audio comes in           |
 
-Put Serum/Vital style wavetables (.wav, single-cycle frames, frame size read
-from the Serum `clm` chunk, otherwise 2048) in `wavetables/`. They are used in
-file name order, so prefix them `01_`, `02_` ... Default 10 tables of 46 waves
-(packed 12 bit, 906 KB); other layouts with `--tables` / `--waves`, e.g.
-8 x 57. The real limit is the bootloader's USB drive: the .uf2 (about twice
-the firmware size) must be smaller than 1,961,472 bytes. Free slots get the built-in "basic" (sine > triangle > saw > square >
-pulse) and "formant" tables. Frames are picked evenly from each file. Then in docker:
-```
-pip3 install numpy               # once, makes the converter fast (optional)
-. /PRJ/build_wavetables.sh
-. /PRJ/build.sh
-```
-The table order is listed at the top of `IOCore/HimaliaSketch/wavetables.h`.
-The converter also levels each table for smooth scanning: (almost) silent
-frames are skipped, sudden quiet frames are turned up and frames that are
-upside down compared to their neighbour are flipped (`--no-level` turns this off).
-
-CV calibration: open the USB serial port at 115200 baud; the module prints the
-raw tune / scan CV readings twice a second. Set `CV_ZERO_ADC` and
-`CV_COUNTS_PER_VOLT` in `HimaliaSketch.ino` from readings at 0 V and e.g. +5 V.
-Every wave is stored band limited in 7 versions, one per octave, and the
-firmware picks the one whose highest harmonic stays below 20 kHz. The low
-versions are stored with many more points than harmonics and the firmware
-reads them with cubic interpolation, so interpolation images stay low too
-(measured: non-harmonic content at least 42 dB, mostly 50-70 dB below the
-signal over the whole pitch range). Hard sync and the wavefolder add their
-own aliasing on top; that is part of how they sound.
+| model        | timbre (SELECT)                                  |
+|--------------|--------------------------------------------------|
+| string       | dark nylon ... bright steel                      |
+| bar          | soft ... hard mallet                             |
+| bell / glass | church bell ... wine glass / plate (inharmonic morph) |
+| drum         | soft ... hard mallet (pitch drops after the strike) |
+| flute/brass  | airy flute ... bright brass                      |
 
 ### generative sequencer (replaces the spread presets)
 The 6 squares are a generative sequencer, Turing machine style: a 16 step
@@ -94,19 +77,6 @@ Voices: melody, sub octave, two harmonies, octave up and a drone that moves
 now and then. Per step the register decides which voices sound, their pulse
 width and which filter caps are switched in.
 
-### real oscillator sync (replaces the digital noise / sample & hold)
-Patch the waveform of another oscillator (the master) into CV IN RATE. Every
-rising zero crossing restarts the wavetable (hard sync); the exact crossing
-time between two samples is interpolated, so the sync is tight.
-
-| control                     | function                                   |
-|-----------------------------|--------------------------------------------|
-| CV IN RATE jack             | hard sync input (master waveform, needs to swing through 0 V) |
-| rate LED                    | on while a sync signal comes in            |
-
-The jack is sampled every audio tick on ADC0; knob readings on ADC0 are
-interleaved with it.
-
 ### flash size
 The Himalia uses an ATSAMD51J20A with 1 MB flash. The old linker script only
 allowed 512 KB (copied from the Doppler, which has a 512 KB chip), which made
@@ -121,6 +91,7 @@ scripts in `IOCore/variant_IOCore/linker_scripts` now use the full 1 MB
 | wavetables, 16 x 16 (16 bit)  | ~690 KB       |
 | wavetables, 8 x 64 (12 bit)   | ~820 KB       |
 | wavetables, 10 x 46, 7 levels | ~952 KB (.uf2 1.91 MB, max 1.96 MB) |
+| resonators                    | ~32 KB        |
 
 ### here is the uf2 bootloader for the samd51
 https://github.com/noscene/uf2-samdx1

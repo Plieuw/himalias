@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.0.0-beta
+
+**Wavetables vervangen door resonator-modellen** (physical modelling), 5 modellen op de ratchet-knop:
+| model | select-knop (klankkleur) |
+|---|---|
+| snaar | donker nylon … helder staal |
+| staaf / marimba | zachte … harde mallet |
+| bel / glas | kerkklok … wijnglas / plaat |
+| trommel | zachte … harde mallet, toonhoogte zakt na de slag |
+| fluit / brass | luchtige fluit … heldere brass (blaast zolang de gate hoog is) |
+
+- **Tune + CV:** toonhoogte (knop 7 octaven vanaf 27,5 Hz, CV 1 V/oct).
+- **Trigger:** aanslaan. **A/B-knop:** korte/lange uitsterving. **Bit-schakelaar:** strijken/blazen zolang de gate hoog is.
+- **CV in rate:** externe audio stoot de resonator aan (zoals Rings). Rate-ledje brandt als er audio binnenkomt.
+- **Clock rate-knop:** wavefolder achter de resonator.
+- LPG en wavetables zijn eruit; firmware is nu 32 KB.
+
 ## v0.9.1-beta
 
 - **Past weer op het HIMALIA-station:** v0.9.0 was als .uf2 (1,99 MB) groter dan de vrije ruimte op de nepschijf van de bootloader (1,96 MB), dus Windows weigerde te kopiëren. Nu 46 golfvormen per tabel: .uf2 is 1,91 MB.
