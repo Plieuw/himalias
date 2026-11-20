@@ -80,6 +80,7 @@ loop of bits that slowly (or quickly) mutates.
 | SPREAD knob + CV            | change: left = loop locked, right = every step random |
 | A/B button (squares side)   | scale: A = minor pentatonic, B = natural minor |
 | noise side DAC out          | melody pitch CV, 1 V/oct, 0 ... +5 V: MAIN TUNE fully left = lowest note at 0 V, fully right = highest note at +5 V |
+| digital noise out (PA22)    | 5 ms trigger whenever the melody note changes |
 
 Voices: melody, sub octave, two harmonies, octave up and a drone that moves
 now and then. Per step the register decides which voices sound, their pulse

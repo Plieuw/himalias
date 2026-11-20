@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.1-beta
+
+- **Sequencer-trigger-uitgang** op de oude digital noise out (PA22): korte trigger van 5 ms telkens als de melodie naar een andere noot gaat. Samen met de pitch-CV stuur je zo een externe stem aan.
+
 ## v0.7.0-beta
 
 - **Echte oscillator-sync in plaats van de interne sync-verhouding.** Patch de golfvorm van een andere module in **CV in rate**: elke stijgende nuldoorgang herstart de wavetable (exact tussen twee samples geïnterpoleerd).

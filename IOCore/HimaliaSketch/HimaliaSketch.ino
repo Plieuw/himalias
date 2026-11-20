@@ -25,6 +25,7 @@
 //   - CV IN RATE jack: sync input, the waveform of another module
 //   - CLOCK RATE knob: soft (left) ... hard (right) sync
 //   - rate LED: on while a sync signal comes in
+//  PA22 (former digital noise out): 5 ms trigger whenever the melody note changes.
 //  The noise side DAC out carries the sequencer pitch CV
 //  (melody, 1 V/oct, 0 ... +5 V; SQUARES MAIN TUNE shifts it up).
 //
@@ -34,7 +35,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.7.0-beta"
+#define HIMALIA_FW_VERSION "0.7.1-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -388,6 +389,8 @@ volatile uint32_t seq_steps_pending = 0;   // set by the audio interrupt on each
 #define SEQ_CV_CODES_PER_V  365.3f
 volatile uint16_t seq_cv_code = 2210;
 static float      seq_mel_volts = 0.0f;    // melody above the lowest note (1 V/oct)
+volatile uint32_t seq_trig_ticks = 0;      // > 0: trigger out (PA22) is high
+#define SEQ_TRIG_TICKS  238                // 5 ms
 #define SEQ_CV_MIN_V      ( 0.0f)          // knob fully left: lowest note at 0 V
 #define SEQ_CV_MAX_V      ( 5.0f)          // knob fully right: highest note at +5 V
 #define SEQ_MEL_RANGE_V   (22.0f / 12.0f)  // highest melody note above the lowest
@@ -441,7 +444,10 @@ static void seqStep(uint16_t change_adc, bool scaleB) {
   spreads[0] = semisToRatio(seqSemis(mel, scaleB));             // melody
 
   // melody as 1 V/oct above the lowest note; the pitch knob adds the base (loop)
-  seq_mel_volts = (float)seqSemis(mel, scaleB) * (1.0f / 12.0f);
+  const float new_mel = (float)seqSemis(mel, scaleB) * (1.0f / 12.0f);
+  // short trigger on PA22 whenever the melody moves to another note
+  if(new_mel != seq_mel_volts) seq_trig_ticks = SEQ_TRIG_TICKS;
+  seq_mel_volts = new_mel;
   spreads[1] = semisToRatio(seqSemis(mel, scaleB) - 12);        // sub octave
   spreads[2] = semisToRatio(seqSemis(mel + 2, scaleB));         // harmony (third / fourth)
   spreads[3] = semisToRatio(seqSemis(mel + 4, scaleB));         // harmony (fifth)
@@ -620,6 +626,14 @@ void renderAudio() {
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
     DAC->DATA[1].reg = (uint16_t)dl;            // SAMPLE OUT
     DAC->DATA[0].reg = seq_cv_code;             // noise side DAC out: sequencer pitch CV
+
+    // sequencer trigger out (PA22, former digital noise out): 5 ms per new note
+    if(seq_trig_ticks){
+      seq_trig_ticks--;
+      PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
+    } else {
+      PORT->Group[PORTA].OUTCLR.reg = 1ul << 22;
+    }
 
     // rate LED: on while a sync signal comes in
     if(sync_seen < 2400) PORT->Group[PORTB].OUTSET.reg = 1ul << 0;
