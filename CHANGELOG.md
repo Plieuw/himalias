@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta
+
+**Squares: generatieve sequencer** (vervangt de spread-presets)
+| control | functie |
+|---|---|
+| Sample trigger in / knop | klok: elke trigger is één stap (slaat ook de LPG aan) |
+| Squares main tune + CV | grondtoon |
+| Spread-knop + CV | verandering: links = loop vast, rechts = elke stap nieuw |
+| A/B-knop (squares) | toonladder: A = mineur pentatonisch, B = natuurlijk mineur |
+
+6 stemmen: melodie, sub-octaaf, twee harmonieën, octaaf hoger en een drone. Per stap bepaalt het register welke stemmen klinken, hun pulsbreedte en welke filtercondensatoren meedoen.
+
 ## v0.1.0-beta
 
 Eerste beta van de wavetable-firmware voor de IO Instruments Himalia.

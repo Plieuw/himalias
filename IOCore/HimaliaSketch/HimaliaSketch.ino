@@ -13,18 +13,28 @@
 //  Wavetables come from wavetables.h, made by tools/make_wavetables.py
 //  (your own Serum/Vital style wav files + built-in tables).
 //
+//  The 6 squares are a generative sequencer (Turing machine style):
+//   - clock: SAMPLE TRIGGER in / button, every trigger is one step
+//   - SQUARES MAIN TUNE knob + CV ... root pitch
+//   - SPREAD knob + CV .............. change: left = loop locked, right = random
+//   - A/B button (squares side) ..... scale: A = minor pentatonic, B = natural minor
+//   - 6 voices: melody, sub octave, two harmonies, octave up, drone; the register
+//     decides per step which voices sound, their pulse width and filter cap
+//
 //  Other changes against the factory firmware:
 //   - linker scripts use the full 1 MB flash of the ATSAMD51J20A
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.1.0-beta"
+#define HIMALIA_FW_VERSION "0.2.0-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
 
 #include "samd51_adc.h"
+
+static void seqStep(uint16_t change_adc, bool scaleB);
 
 #define MAX(a,b) ((a) > (b) ? a : b)
 #define MIN(a,b) ((a) < (b) ? a : b)
@@ -294,6 +304,8 @@ void setup() {
   zt4.setPeriodMatch(125, 250, 0); // 1 match, channel 0
   zt4.setCallback(true, TC_CALLBACK_CC_CHANNEL0, renderAudio);  // set DAC in the callback
   zt4.enable(true);
+
+  seqStep(0, false);   // start the squares with a defined pattern
 }
 
 //
@@ -339,6 +351,74 @@ float             lpg_env   = 0.0f;     // 0 ... 1, like the light in a vactrol
 float             lpg_z1    = 0.0f;     // filter states (2 x one pole)
 float             lpg_z2    = 0.0f;
 uint32_t          lpg_hold  = 0;        // minimum gate length for short triggers
+//
+//  Generative sequencer state
+//
+volatile uint32_t seq_steps_pending = 0;   // set by the audio interrupt on each trigger
+static uint16_t   seq_reg   = 0xB3A5;      // 16 bit loop, the "Turing machine" register
+static uint32_t   seq_pos   = 0;           // step counter
+static uint32_t   seq_rng   = 0x12345678;  // xorshift random
+static int32_t    seq_drone = 0;           // drone degree, changes once per loop
+
+static uint32_t seqRand() {
+  seq_rng ^= seq_rng << 13; seq_rng ^= seq_rng >> 17; seq_rng ^= seq_rng << 5;
+  return seq_rng;
+}
+
+// scale degree -> semitones (any degree, negative ok)
+static int32_t seqSemis(int32_t degree, bool scaleB) {
+  static const int8_t pent[5]  = { 0, 3, 5, 7, 10 };            // minor pentatonic
+  static const int8_t minor[7] = { 0, 2, 3, 5, 7, 8, 10 };      // natural minor
+  const int32_t n = scaleB ? 7 : 5;
+  int32_t oct = degree >= 0 ? degree / n : -(( -degree + n - 1) / n);
+  int32_t idx = degree - oct * n;
+  return oct * 12 + (scaleB ? minor[idx] : pent[idx]);
+}
+
+static inline float semisToRatio(int32_t semis) {
+  return exp2f((float)semis * (1.0f / 12.0f));
+}
+
+// one sequencer step: shift the register, maybe flip the bit, set the 6 voices
+static void seqStep(uint16_t change_adc, bool scaleB) {
+  // change probability: 0 (locked) ... 0.5 (completely random)
+  float p = (float)((int32_t)change_adc - 250) * (1.0f / (3700.0f - 250.0f));
+  if(p < 0.05f) p = 0.0f;                         // small dead zone: really locked
+  if(p > 1.0f)  p = 1.0f;
+  p *= 0.5f;
+
+  uint16_t bit = seq_reg >> 15;
+  if((float)(seqRand() & 0xFFFF) < p * 65536.0f) bit ^= 1;
+  seq_reg = (uint16_t)((seq_reg << 1) | bit);
+  seq_pos++;
+
+  const int32_t n = scaleB ? 7 : 5;
+  if((seq_pos & 15) == 0 && (seqRand() & 3) == 0)          // drone moves sometimes, per loop
+    seq_drone = (int32_t)(seqRand() % 3) * (scaleB ? 2 : 1);
+
+  // melody: low 5 bits -> degree over ~2 octaves
+  const int32_t mel = (int32_t)(seq_reg & 0x1F) % (2 * n);
+  const uint16_t r = seq_reg;
+
+  // voice ratios relative to the MAIN TUNE pitch
+  spreads[0] = semisToRatio(seqSemis(mel, scaleB));             // melody
+  spreads[1] = semisToRatio(seqSemis(mel, scaleB) - 12);        // sub octave
+  spreads[2] = semisToRatio(seqSemis(mel + 2, scaleB));         // harmony (third / fourth)
+  spreads[3] = semisToRatio(seqSemis(mel + 4, scaleB));         // harmony (fifth)
+  spreads[4] = semisToRatio(seqSemis(mel, scaleB) + 12);        // octave up
+  spreads[5] = semisToRatio(seqSemis(seq_drone, scaleB) - 12);  // drone
+
+  // which voices sound on this step (melody always; others from register bits)
+  const bool on[6] = { true, (r & 0x0100) != 0, (r & 0x0200) != 0, (r & 0x0400) != 0,
+                       (r & 0x0800) != 0 && (r & 0x0020) != 0, true };
+  // pulse width per voice from the register: 50% ... ~20%
+  for(int i = 0; i < 6; i++){
+    const float pw = (float)((r >> (i * 2)) & 3) * 0.2f;      // 0, 0.2, 0.4, 0.6
+    sq_TRS[i]  = on[i] ? pw : 3.0f;                             // 3 = voice silent
+    flt_TRS[i] = ((r >> (i + 6)) & 1) ? -3.0f : 3.0f;           // filter cap per voice on / off
+  }
+}
+
 //
 //  One wavetable value, linear interpolation inside the table (-2048 ... 2047)
 //  Tables are packed 12 bit: 2 samples in 3 bytes.
@@ -442,6 +522,7 @@ void renderAudio() {
     PORT->Group[PORTB].OUTSET.reg = 1ul << 31;
     if(!previous_trigger){          // check for edge
       wt_phase = 0.0f;   // sync: restart the waveform
+      seq_steps_pending++;  // clock the squares sequencer
     }
     previous_trigger=true;
     lpg_hold = 144;                     // 3 ms: short triggers still open the gate fully
@@ -563,193 +644,16 @@ void loop() {
   thea_inc[4]=  spreads[4] * inc_sqr;
   thea_inc[5]=  spreads[5] * inc_sqr;
 
-  // Bank Switch
-  uint16_t spread_bank_offset=0;
-  if(!(PORT->Group[PORTA].IN.reg & (1ul << 21))) // PA21 button A/B Bank
-    spread_bank_offset=16;
-
-  // prg spread
-  uint16_t spread_adc = adc51.readAnalog(PB05,ADC_Channel7,true);
-  static uint16_t spread_state = 0;
-  uint16_t spread   = selectHyst(spread_adc,250,3700, 15, spread_state) + spread_bank_offset;
-  
-
-
-  switch(spread){
-    case 0: // all Off
-      flt_TRS[0]= -3.0f;      flt_TRS[1]= 3.0f;        flt_TRS[2]= -3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= -3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= -3.0f;      sq_TRS[1]= 3.0f;        sq_TRS[2]= -3.0f;       sq_TRS[3]= 3.0f;       sq_TRS[4]= -3.0f;        sq_TRS[5]= 3.0f;
-      spreads[0]= 1.001f;   spreads[1]= 1.001f;    spreads[2]= 1.0001f;    spreads[3]= 1.0001f;   spreads[4]= 1.0001f;     spreads[5]= 1.0001f;
-      thea[1] = thea[0]; // sync phases
-      break;    
-    case 1:
-      flt_TRS[0]= -3.0f;    flt_TRS[1]= 3.0f;        flt_TRS[2]= -3.0f;      flt_TRS[3]= 3.0f;      flt_TRS[4]= -3.0f;       flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.2f;      sq_TRS[1]= -0.3f;        sq_TRS[2]= -3.0f;       sq_TRS[3]= 3.0f;       sq_TRS[4]= -3.0f;        sq_TRS[5]= 3.0f;
-      spreads[0]= 1.001f;   spreads[1]= 1.001f;      spreads[2]= 1.0001f;    spreads[3]= 1.0001f;   spreads[4]= 1.0001f;     spreads[5]= 1.0001f;
-                            thea[1] = thea[0]; // sync phases
-      break;
-    case 2:
-      flt_TRS[0]= 0.2f;      flt_TRS[1]= 0.8f;        flt_TRS[2]= 0.9f;       flt_TRS[3]= 0.4f;       flt_TRS[4]= -3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.2f;       sq_TRS[1]= -0.2f;        sq_TRS[2]= 0.4f;        sq_TRS[3]= -0.4f;        sq_TRS[4]= 0.5f;       sq_TRS[5]= 0.6f;
-      spreads[0]= 1.0000f;   spreads[1]= 1.0000f;    spreads[2]= 1.0000f;    spreads[3]= 1.0000f;    spreads[4]= 1.0000f;    spreads[5]= 1.0000f;
-                             thea[1] = thea[0];     thea[2] = thea[0];      thea[3] = thea[0];       thea[4] = thea[0];      thea[5] = thea[0]; 
-      break;
-    case 3:
-      flt_TRS[0]= -3.0f;      flt_TRS[1]= 3.0f;        flt_TRS[2]= -3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= -3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= -3.0f;       sq_TRS[5]= 3.0f;
-      spreads[0]= 1.001f;   spreads[1]= 1.0015f;   spreads[2]= 1.002f;       spreads[3]= 1.003f;    spreads[4]= 1.004f;    spreads[5]= 1.005f;
-      break;
-    case 4:
-      flt_TRS[0]= -3.0f;      flt_TRS[1]= 3.0f;        flt_TRS[2]= -3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= -3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.0f;        sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.0f;       spreads[2]= 0.416666f;  spreads[3]= 0.416666f;  spreads[4]= 0.583333f;    spreads[5]= 0.583333f;
-      break;
-    case 5:
-      flt_TRS[0]= -3.0f;      flt_TRS[1]= -3.0f;        flt_TRS[2]= -3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.0f;        sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;    spreads[1]= 0.5;     spreads[2]= 1.20f;    spreads[3]= 1.50f;            spreads[4]= 1.875f;         spreads[5]= 1.8f;
-      break;
-    case 6: // SUS2
-      flt_TRS[0]= -3.0f;      flt_TRS[1]= 3.0f;        flt_TRS[2]= -3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= -3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.0f;        sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;    spreads[1]= 1.0;     spreads[2]= 1.33333f;    spreads[3]= 1.33333333f;        spreads[4]= 1.5f; spreads[5]= 1.5f;
-      break;      
-    case 7: // Dur
-      flt_TRS[0]= -3.0f;      flt_TRS[1]= 3.0f;        flt_TRS[2]= -3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= -3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.0f;        sq_TRS[5]= 0.0f;
-      spreads[0]= 1.2f;    spreads[1]= 1.2;     spreads[2]= 1.5f;    spreads[3]= 1.5f; spreads[4]= 1.8f; spreads[5]= 1.8f;
-      break;  
-    case 8: // Moll 6/5 
-      flt_TRS[0]= -3.0f;      flt_TRS[1]= 3.0f;        flt_TRS[2]= -3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= -3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.0f;        sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;    spreads[1]= 1.0;     spreads[2]= 1.20f;    spreads[3]= 1.20f; spreads[4]= 1.5f; spreads[5]= 1.5f;
-      break;  
-    case 9:
-      flt_TRS[0]= -3.0f;      flt_TRS[1]= 3.0f;        flt_TRS[2]= -3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= -3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.2f;       sq_TRS[1]= -0.2f;        sq_TRS[2]= 0.8f;        sq_TRS[3]= 0.2f;        sq_TRS[4]= 0.9f;        sq_TRS[5]= 0.1f;
-      spreads[0]= 1.001f;    spreads[1]= 1.002f;     spreads[2]= 1.001f * 0.66666f;    spreads[3]= 1.002f*0.66666f; spreads[4]= 1.004f * 0.66666f * 2.0f; spreads[5]= 1.008f  * 0.66666f * 2.0f;
-      break;  
-    case 10:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;       flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;        sq_TRS[5]= 0.1f;
-      spreads[0]= 1.0f;      spreads[1]= 1.249f;     spreads[2]= 1.667f;     spreads[3]= 2.0f;       spreads[4]= 2.503f;     spreads[5]= 3.004f;
-      break;  
-    case 11:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;       flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;        sq_TRS[5]= 0.1f;
-      spreads[0]= 1.0f;      spreads[1]= 1.249f;     spreads[2]= 1.506f;     spreads[3]= 1.874f;     spreads[4]= 2.252f;     spreads[5]= 3.07f;
-      break;  
-    case 12:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;       flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;        sq_TRS[5]= 0.1f;
-      spreads[0]= 1.001f;    spreads[1]= 2.0f;       spreads[2]= 3.0f;       spreads[3]= 4.0f;       spreads[4]= 5.0f;       spreads[5]= 6.0f;
-      break;  
-    case 13:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;       flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.0f;        sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.067f;     spreads[2]= 1.099f;     spreads[3]= 1.111f;     spreads[4]= 1.222f;     spreads[5]= 1.417f;
-      break;  
-    case 14:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.0f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.0f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.534f;     spreads[2]= 2.199f;     spreads[3]= 2.352f;     spreads[4]= 2.377f;      spreads[5]= 2.614f;
-      break;  
-    case 15:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.11f;      spreads[2]= 1.211f;     spreads[3]= 1.314f;     spreads[4]= 1.379f;      spreads[5]= 1.401f;
-      break;  
-
-
-
-
-  // BANK 2
-    case 16:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 2.211f;      spreads[2]= 2.513f;     spreads[3]= 2.632f;     spreads[4]= 3.316f;      spreads[5]= 3.682f;
-      break;  
-    case 17:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.539f;      spreads[2]= 1.776f;     spreads[3]= 2.224f;     spreads[4]= 2.632f;      spreads[5]= 3.316f;
-      break;  
-    case 18:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.105f;      spreads[2]= 1.171f;     spreads[3]= 1.237f;     spreads[4]= 1.276f;      spreads[5]= 1.355f;
-      break;  
-    case 19:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 2.01f;      spreads[2]= 2.99f;     spreads[3]= 4.02f;     spreads[4]= 4.97f;      spreads[5]= 6.03f;
-      break;  
-    case 20:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 3.346f;      spreads[2]= 3.564f;     spreads[3]= 3.974f;     spreads[4]= 5.282f;      spreads[5]= 5.949f;
-      break;  
-    case 21:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.141f;      spreads[2]= 1.218f;     spreads[3]= 1.333f;     spreads[4]= 1.5f;      spreads[5]= 1.603f;
-      break;  
-    case 22:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.769f;      spreads[2]= 2.244f;     spreads[3]= 2.666f;     spreads[4]= 3.0f;      spreads[5]= 3.551f;
-      break;  
-    case 23:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.012f;      spreads[2]= 2.011f;     spreads[3]= 2.034f;     spreads[4]= 2.391f;      spreads[5]= 2.414f;
-      break;
-    case 24:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.013f;      spreads[2]= 1.506f;     spreads[3]= 2.023f;     spreads[4]= 2.413f;      spreads[5]= 3.034f;
-      break;  
-    case 25:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.131f;      spreads[2]= 1.187f;     spreads[3]= 1.285f;     spreads[4]= 1.355f;      spreads[5]= 1.480f;
-      break;  
-    case 26:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.537f;      spreads[2]= 2.349f;     spreads[3]= 2.752f;     spreads[4]= 2.357f;      spreads[5]= 3.114f;
-      break;  
-    case 27:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.572f;      spreads[2]= 1.845f;     spreads[3]= 2.2f;     spreads[4]= 3.379f;      spreads[5]= 3.401f;
-      break;
-   case 28:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.346f;      spreads[1]= 2.015f;      spreads[2]= 3.584f;     spreads[3]= 4.792f;     spreads[4]= 7.162f;      spreads[5]= 10.754f;
-      break;  
-    case 29:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 2.515f;      spreads[1]= 3.015f;      spreads[2]= 3.777f;     spreads[3]= 4.523f;     spreads[4]= 5.654f;      spreads[5]= 6.785f;
-      break;  
-    case 30:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.508f;      spreads[2]= 2.015f;     spreads[3]= 2.5156f;     spreads[4]= 3.015f;      spreads[5]= 3.577f;
-      break;  
-    case 31:
-      flt_TRS[0]= 3.0f;      flt_TRS[1]= 3.0f;       flt_TRS[2]= 3.0f;       flt_TRS[3]= 3.0f;       flt_TRS[4]= 3.0f;        flt_TRS[5]= 3.0f;
-      sq_TRS[0]= 0.0f;       sq_TRS[1]= 0.0f;        sq_TRS[2]= 0.7f;        sq_TRS[3]= 0.0f;        sq_TRS[4]= 0.9f;         sq_TRS[5]= 0.0f;
-      spreads[0]= 1.0f;      spreads[1]= 1.792f;      spreads[2]= 2.015f;     spreads[3]= 2.392f;     spreads[4]= 3.584f;      spreads[5]= 4.523f;
-      break;
-
-
-
-
-
-
+  // -----------------------------------------------------------------
+  // Generative sequencer on the 6 squares (Turing machine style)
+  //   clock ........ SAMPLE TRIGGER in / button (every rising edge = 1 step)
+  //   MAIN TUNE .... root pitch (knob + CV, as before)
+  //   SPREAD ....... change: left = loop locked, right = every step new
+  //   A/B button ... scale: A = minor pentatonic, B = natural minor (aeolian)
+  while(seq_steps_pending){
+    seq_steps_pending--;
+    uint16_t spread_adc = adc51.readAnalog(PB05,ADC_Channel7,true);
+    seqStep(spread_adc, !(PORT->Group[PORTA].IN.reg & (1ul << 21)));
   }
 
   

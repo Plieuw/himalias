@@ -62,6 +62,21 @@ pip3 install numpy               # once, makes the converter fast (optional)
 The table order is listed at the top of `IOCore/HimaliaSketch/wavetables.h`.
 Every wave is stored band limited in 4 versions so high notes do not alias.
 
+### generative sequencer (replaces the spread presets)
+The 6 squares are a generative sequencer, Turing machine style: a 16 step
+loop of bits that slowly (or quickly) mutates.
+
+| control                     | function                                   |
+|-----------------------------|--------------------------------------------|
+| SAMPLE TRIGGER in / button  | clock: every trigger is one step (also strikes the LPG / syncs the wavetable) |
+| SQUARES MAIN TUNE + CV      | root pitch                                 |
+| SPREAD knob + CV            | change: left = loop locked, right = every step random |
+| A/B button (squares side)   | scale: A = minor pentatonic, B = natural minor |
+
+Voices: melody, sub octave, two harmonies, octave up and a drone that moves
+now and then. Per step the register decides which voices sound, their pulse
+width and which filter caps are switched in.
+
 ### flash size
 The Himalia uses an ATSAMD51J20A with 1 MB flash. The old linker script only
 allowed 512 KB (copied from the Doppler, which has a 512 KB chip), which made
