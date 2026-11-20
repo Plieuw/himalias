@@ -42,24 +42,25 @@ SAMPLE OUT is now a wavetable oscillator:
 | control                     | function                                   |
 |-----------------------------|--------------------------------------------|
 | SAMPLE TUNE knob + CV       | pitch (about 16 Hz ... 8 kHz)              |
-| SAMPLE SELECT knob + CV     | morph through the 16 waves of a table      |
-| RATCHET knob + CV           | wavetable select (up to 16 tables)         |
+| SAMPLE SELECT knob + CV     | scan through the 64 waves of a table       |
+| RATCHET knob + CV           | wavetable select (8 tables)                |
 | A/B button (sample side)    | wavefolder on / off                        |
 | TRIGGER in / button         | phase reset (sync)                         |
 | BIT switch                  | 8 bit bytebeat mode (A/B = bytebeat bank)  |
 
 Put Serum/Vital style wavetables (.wav, single-cycle frames, frame size read
 from the Serum `clm` chunk, otherwise 2048) in `wavetables/`. They are used in
-file name order, so prefix them `01_`, `02_` ... Up to 16 tables; free slots
-get the built-in "basic" (sine > triangle > saw > square > pulse) and
-"formant" tables. 16 frames are picked evenly from each file. Then in docker:
+file name order, so prefix them `01_`, `02_` ... Default 8 tables of 64 waves
+(packed 12 bit, 768 KB); other layouts with `--tables` / `--waves`, e.g.
+16 x 32. Free slots get the built-in "basic" (sine > triangle > saw > square >
+pulse) and "formant" tables. Frames are picked evenly from each file. Then in docker:
 ```
 pip3 install numpy               # once, makes the converter fast (optional)
 . /PRJ/build_wavetables.sh
 . /PRJ/build.sh
 ```
 The table order is listed at the top of `IOCore/HimaliaSketch/wavetables.h`.
-Every wave is stored band limited in 5 versions so high notes do not alias.
+Every wave is stored band limited in 4 versions so high notes do not alias.
 
 ### flash size
 The Himalia uses an ATSAMD51J20A with 1 MB flash. The old linker script only
@@ -72,7 +73,8 @@ scripts in `IOCore/variant_IOCore/linker_scripts` now use the full 1 MB
 |-------------------------------|---------------|
 | factory (16 bit samples)      | ~394 KB       |
 | wavetables, 2 tables          | ~181 KB       |
-| wavetables, 16 tables         | ~690 KB       |
+| wavetables, 16 x 16 (16 bit)  | ~690 KB       |
+| wavetables, 8 x 64 (12 bit)   | ~820 KB       |
 
 ### here is the uf2 bootloader for the samd51
 https://github.com/noscene/uf2-samdx1

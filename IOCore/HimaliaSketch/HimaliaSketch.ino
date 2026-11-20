@@ -3,8 +3,8 @@
 //
 //  The sample player is replaced by a wavetable oscillator on SAMPLE OUT:
 //   - SAMPLE TUNE knob + CV ....... pitch (exponential)
-//   - SAMPLE SELECT knob + CV ..... morph: smooth crossfade through 16 waves
-//   - RATCHET knob + CV ........... wavetable select (up to 16 tables)
+//   - SAMPLE SELECT knob + CV ..... scan / morph through the waves of a table
+//   - RATCHET knob + CV ........... wavetable select
 //   - A/B button (sample side) .... wavefolder on / off
 //   - TRIGGER in / button ......... phase reset (sync), LED flashes
 //   - BIT switch .................. 8 bit bytebeat mode, as before
@@ -384,11 +384,17 @@ float             wt_phase = 0.0f;
 
 volatile int prg8=0;
 //
-//  One wavetable value, linear interpolation inside the table (-32767 ... 32767)
+//  One wavetable value, linear interpolation inside the table (-2048 ... 2047)
+//  Tables are packed 12 bit: 2 samples in 3 bytes.
 //
-static inline __attribute__((always_inline)) float wtRead(const int16_t *t, uint32_t i0, float frac) {
-  const float a = t[i0];
-  const float b = t[(i0 + 1) & (WT_LEN - 1)];
+static inline __attribute__((always_inline)) int32_t wtSample(const uint8_t *t, uint32_t i) {
+  const uint8_t *p = t + (i >> 1) * 3;
+  const int32_t v = (i & 1) ? ((p[1] >> 4) | (p[2] << 4)) : (p[0] | ((p[1] & 0x0F) << 8));
+  return v - 2048;
+}
+static inline __attribute__((always_inline)) float wtRead(const uint8_t *t, uint32_t i0, float frac) {
+  const float a = (float)wtSample(t, i0);
+  const float b = (float)wtSample(t, (i0 + 1) & (WT_LEN - 1));
   return a + (b - a) * frac;
 }
 
@@ -516,7 +522,7 @@ void renderAudio() {
     const uint32_t lvl  = wt_level;
     const float a = wtRead(wavetables[base + w0][lvl], i0, frac);
     const float b = wtRead(wavetables[base + w1][lvl], i0, frac);
-    float out = (a + (b - a) * mf) * (1.0f / 32768.0f);   // -1 ... +1
+    float out = (a + (b - a) * mf) * (1.0f / 2048.0f);    // -1 ... +1
 
     const float g = wt_fold;
     if(g > 1.01f) out = wtFold(out * g);
@@ -575,9 +581,10 @@ void loop() {
   if(inc > 0.45f) inc = 0.45f;
   wt_inc = inc;
 
-  // pick the band limited table that stays below nyquist (0.5 cycles per tick)
+  // pick the band limited table: harmonics may pass nyquist (24 kHz) a little,
+  // as long as what folds back lands above ~20 kHz (28 kHz / 48 kHz = 0.583)
   uint32_t lvl = 0;
-  const float max_harm = 0.5f / inc;
+  const float max_harm = 0.583f / inc;
   while(lvl < WT_LEVELS - 1 && (float)wt_level_harm[lvl] > max_harm) lvl++;
   wt_level = lvl;
 
