@@ -85,19 +85,16 @@ Voices: melody, sub octave, two harmonies, octave up and a drone that moves
 now and then. Per step the register decides which voices sound, their pulse
 width and which filter caps are switched in.
 
-### delay (replaces the digital noise / sample & hold)
-A clocked ping-pong delay on the wavetable / LPG voice, mixed to SAMPLE OUT.
+### hard sync (replaces the digital noise / sample & hold)
+Oscillator hard sync on the wavetable: the wave is read at a multiple of the
+pitch and restarts on every pitch cycle.
 
-| control / jack              | function                                   |
+| control                     | function                                   |
 |-----------------------------|--------------------------------------------|
-| CV IN RATE                  | clock in: delay time follows the time between pulses |
-| SAMPLE TRIGGER in           | clock when CV IN RATE is unpatched / stopped for 4 s |
-| CLOCK RATE knob             | division: 1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4 1 4/3 3/2 2 |
-| feedback                    | fixed 45%                                  |
-| SAMPLE OUT                  | dry + echoes (ping-pong mixed to mono)      |
-| rate LED / PA22 out         | pulse on every echo                         |
+| CLOCK RATE knob             | sync ratio 1x (off) ... 8x                 |
+| CV IN RATE                  | adds to the ratio, bipolar, ~0.7 per volt (max 16x) |
+| rate LED                    | on while sync is active                    |
 
-Up to 2 s per side (delay lines at 24 kHz); longer times are halved.
 The analog noise section is unchanged.
 
 ### flash size

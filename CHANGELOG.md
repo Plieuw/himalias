@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.6.0-beta
+
+- **Delay vervangen door hard sync op de wavetable.** Clock rate-knop: sync-verhouding 1× (uit) tot 8×. CV in rate telt erbij op (bipolair, ~0,7 per volt, max 16×). Het rate-ledje brandt als sync actief is. De anti-aliasing houdt rekening met de hogere leessnelheid.
+- Sequencer-pitch-CV blijft op de DAC-uitgang van de noise-kant.
+
 ## v0.5.1-beta
 
 - **Sequencer-CV volgt de squares main tune-knop:** helemaal links begint de laagste noot op -5 V. Rechtsom schuift de hele melodie omhoog, tot de hoogste noot +5,1 V bereikt (het maximum van de uitgang). Er wordt dus nooit iets afgekapt. Een CV op de main tune-ingang telt mee.

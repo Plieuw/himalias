@@ -21,14 +21,11 @@
 //   - 6 voices: melody, sub octave, two harmonies, octave up, drone; the register
 //     decides per step which voices sound, their pulse width and filter cap
 //
-//  The digital noise / S&H is a ping-pong delay on the wavetable, mixed to
-//  SAMPLE OUT. The noise side DAC out carries the sequencer pitch CV
+//  The digital noise / S&H is replaced by hard sync on the wavetable:
+//   - CLOCK RATE knob: sync ratio 1x (off) ... 8x, CV IN RATE adds to it
+//   - rate LED: on while sync is active
+//  The noise side DAC out carries the sequencer pitch CV
 //  (melody, 1 V/oct; SQUARES MAIN TUNE sets the base, -5 V fully left).
-//   - time = time between clock pulses x division
-//   - clock: CV IN RATE jack (gate/trigger); unpatched: the sample trigger
-//   - CLOCK RATE knob: division 1/8 1/6 1/4 1/3 3/8 1/2 2/3 3/4 1 4/3 3/2 2
-//   - feedback fixed at 45%
-//   - rate LED + PA22: pulse on every echo time
 //
 //  Other changes against the factory firmware:
 //   - linker scripts use the full 1 MB flash of the ATSAMD51J20A
@@ -36,7 +33,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.5.1-beta"
+#define HIMALIA_FW_VERSION "0.6.0-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -361,39 +358,13 @@ float             lpg_z1    = 0.0f;     // filter states (2 x one pole)
 float             lpg_z2    = 0.0f;
 uint32_t          lpg_hold  = 0;        // minimum gate length for short triggers
 //
-//  Stereo ping-pong delay (replaces the digital noise / S&H)
-//    input ......... wavetable / LPG output
-//    left .......... SAMPLE OUT (DAC1): dry + left echoes
-//    right ......... noise side DAC output (DAC0): right echoes
-//    time .......... clock period (time between clock pulses) x division
-//    clock ......... CV IN RATE jack, or the sample trigger when unpatched
-//    CLOCK RATE .... division; feedback fixed 45%
-//  Delay lines run at half rate (24 kHz) so they hold up to 2 seconds.
+//  Hard sync on the wavetable (replaces the delay / digital noise)
+//    CLOCK RATE knob ... sync ratio 1x (off) ... 8x
+//    CV IN RATE ........ adds to the ratio (bipolar, about 0.7 per volt)
+//  The wave is read at ratio x the pitch and restarts every pitch cycle.
 //
-#define DLY_LEN 48000                      // samples per channel at 24 kHz = 2 s
-static int16_t    dly_l[DLY_LEN];
-static int16_t    dly_r[DLY_LEN];
-static uint32_t   dly_w = 0;               // write position
-volatile float    dly_target = 6000.0f;    // wanted delay in 24 kHz samples
-static float      dly_time   = 6000.0f;    // smoothed (tape-like glide on changes)
-volatile float    dly_fb     = 0.45f;      // feedback
-static float      dly_lp_l = 0, dly_lp_r = 0;     // feedback tone filters
-static float      dly_out_l = 0, dly_out_r = 0;   // wet outputs
-static float      dly_prev_l = 0, dly_prev_r = 0; // previous wet outputs (interpolation)
-volatile uint32_t clk_period = 24000;      // 48 kHz ticks between triggers (default 0.5 s)
+volatile float    wt_sync    = 1.0f;       // sync ratio
 volatile uint32_t audio_tick = 0;          // counts 48 kHz audio ticks
-volatile bool     ext_clk_active = false;  // delay clocked from the noise CV jack
-volatile uint32_t dly_led    = 0;          // LED / pulse out on each echo time
-
-static inline __attribute__((always_inline)) float dlyRead(const int16_t *buf, float d) {
-  float pos = (float)dly_w - d;
-  if(pos < 0.0f) pos += (float)DLY_LEN;
-  uint32_t i0 = (uint32_t)pos;
-  if(i0 >= DLY_LEN) i0 -= DLY_LEN;
-  const uint32_t i1 = (i0 + 1 < DLY_LEN) ? i0 + 1 : 0;
-  const float f = pos - (float)(uint32_t)pos;
-  return ((float)buf[i0] + ((float)buf[i1] - (float)buf[i0]) * f) * (1.0f / 32768.0f);
-}
 
 //
 //  Generative sequencer state
@@ -561,10 +532,6 @@ void renderAudio() {
     if(!previous_trigger){          // check for edge
       wt_phase = 0.0f;   // sync: restart the waveform
       seq_steps_pending++;  // clock the squares sequencer
-      static uint32_t last_edge = 0;
-      const uint32_t per = tick - last_edge;
-      last_edge = tick;
-      if(!ext_clk_active && per > 480 && per < 4u * 48000u) clk_period = per;   // 10 ms ... 4 s
     }
     previous_trigger=true;
     lpg_hold = 144;                     // 3 ms: short triggers still open the gate fully
@@ -581,7 +548,9 @@ void renderAudio() {
     wt_phase += wt_inc;
     if(wt_phase >= 1.0f) wt_phase -= 1.0f;
 
-    const float    pos  = wt_phase * (float)WT_LEN;
+    float sp = wt_phase * wt_sync;                         // hard sync: slave phase
+    sp -= (float)(int32_t)sp;
+    const float    pos  = sp * (float)WT_LEN;
     const uint32_t i0   = ((uint32_t)pos) & (WT_LEN - 1);
     const float    frac = pos - (float)(uint32_t)pos;
 
@@ -612,53 +581,14 @@ void renderAudio() {
       if(g > 1.01f) out = wtFold(out * g);
     }
 
-    // ---- stereo ping-pong delay, processed every 2nd tick (24 kHz)
-    static float in_acc = 0.0f;
-    static bool  odd = false;
-    in_acc += out;
-    odd = !odd;
-    if(!odd){
-      const float in = in_acc * 0.5f;
-      in_acc = 0.0f;
-      dly_time += (dly_target - dly_time) * 0.0004f;          // glide when the time changes
-      const float rl = dlyRead(dly_l, dly_time);
-      const float rr = dlyRead(dly_r, dly_time);
-      dly_lp_l += (rl - dly_lp_l) * 0.45f;                      // darker repeats (~4 kHz)
-      dly_lp_r += (rr - dly_lp_r) * 0.45f;
-      const float fb = dly_fb;
-      float wl = in + dly_lp_r * fb;                            // ping: right feeds left
-      float wr = dly_lp_l;                                      // pong: left feeds right
-      if(wl >  0.999f) wl =  0.999f;  if(wl < -0.999f) wl = -0.999f;
-      if(wr >  0.999f) wr =  0.999f;  if(wr < -0.999f) wr = -0.999f;
-      dly_l[dly_w] = (int16_t)(wl * 32767.0f);
-      dly_r[dly_w] = (int16_t)(wr * 32767.0f);
-      if(++dly_w >= DLY_LEN) dly_w = 0;
-      dly_prev_l = dly_out_l;  dly_prev_r = dly_out_r;
-      dly_out_l = rl;          dly_out_r = rr;
-    }
-    // linear interpolation between the 24 kHz delay samples (one 24 kHz sample
-    // late): prev, halfway, next, halfway ... no stair steps
-    const float wet_l = odd ? (dly_prev_l + dly_out_l) * 0.5f : dly_prev_l;
-    const float wet_r = odd ? (dly_prev_r + dly_out_r) * 0.5f : dly_prev_r;
-
-    // delay is mono now: both ping-pong sides go to SAMPLE OUT
-    float L = out * 0.75f + (wet_l + wet_r) * 0.45f;
-    int32_t dl = 2048 + (int32_t)(L * 2047.0f);
+    int32_t dl = 2048 + (int32_t)(out * 2047.0f);
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
-    DAC->DATA[1].reg = (uint16_t)dl;            // SAMPLE OUT: dry + echoes
+    DAC->DATA[1].reg = (uint16_t)dl;            // SAMPLE OUT
     DAC->DATA[0].reg = seq_cv_code;             // noise side DAC out: sequencer pitch CV
 
-    // LED + pulse out (PA22) on every echo time
-    static uint32_t beat = 0;
-    if(++beat >= (uint32_t)(dly_time * 2.0f)){ beat = 0; dly_led = 1200; }   // 25 ms flash
-    if(dly_led){
-      dly_led--;
-      PORT->Group[PORTB].OUTSET.reg = 1ul << 0;
-      PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
-    } else {
-      PORT->Group[PORTB].OUTCLR.reg = 1ul << 0;
-      PORT->Group[PORTA].OUTCLR.reg = 1ul << 22;
-    }
+    // rate LED: on while sync is active
+    if(wt_sync > 1.02f) PORT->Group[PORTB].OUTSET.reg = 1ul << 0;
+    else                PORT->Group[PORTB].OUTCLR.reg = 1ul << 0;
   }
 
   // PORT->Group[PORTA].OUTCLR.reg = 1ul << 22;
@@ -684,40 +614,18 @@ static inline float cvVolts(uint16_t adc) {
 
 void loop() {
 
-  // Delay: CLOCK RATE knob = division of the clock
-  //        CV IN RATE jack = delay clock input (gate/trigger, > ~2V).
-  //        Unpatched or no pulses for 4 s: the delay follows the sample trigger.
-  uint16_t clk_jack = adc51.readAnalog(PB01,ADC_Channel13,false);
+  // Hard sync: CLOCK RATE knob = ratio 1 ... 8, CV IN RATE adds (bipolar)
+  uint16_t sync_jack = adc51.readAnalog(PB01,ADC_Channel13,false);
+  uint16_t sync_poti = adc51.readAnalog(PB02,ADC_Channel14,false);
   {
-    static bool     high = false;
-    static uint32_t last = 0;
-    const uint32_t  now  = audio_tick;
-    if(!high && clk_jack > 1600 && clk_jack < 3900){          // rising edge (>4000 = unpatched)
-      high = true;
-      const uint32_t per = now - last;
-      if(last != 0 && per > 480 && per < 4u * 48000u){ clk_period = per; ext_clk_active = true; }
-      last = now;
-    } else if(high && (clk_jack < 900 || clk_jack >= 4000)){
-      high = false;
-    }
-    if(ext_clk_active && (now - last) > 4u * 48000u) ext_clk_active = false;   // clock stopped
+    float r = 1.0f + (float)sync_poti * (7.0f / 4000.0f);
+    if(sync_jack < 4000) r += cvVolts(sync_jack) * 0.7f;
+    if(r < 1.0f)  r = 1.0f;
+    if(r > 16.0f) r = 16.0f;
+    static float r_smooth = 1.0f;
+    r_smooth += (r - r_smooth) * 0.2f;
+    wt_sync = r_smooth;
   }
-  uint16_t div_poti = adc51.readAnalog(PB02,ADC_Channel14,false);
-  static const float divisions[12] = { 1.0f/8, 1.0f/6, 1.0f/4, 1.0f/3, 3.0f/8, 1.0f/2,
-                                       2.0f/3, 3.0f/4, 1.0f,   4.0f/3, 3.0f/2, 2.0f };
-  static uint16_t div_state = 8;
-  const uint16_t div_idx = selectHyst(div_poti, 100, 4000, 11, div_state);
-  float d = (float)clk_period * 0.5f * divisions[div_idx];   // in 24 kHz samples
-  while(d > (float)(DLY_LEN - 4)) d *= 0.5f;                  // too long: half the time
-  if(d < 2.0f) d = 2.0f;
-  // ignore small clock jitter (< 2%): otherwise every tiny tempo wobble
-  // bends the pitch of the echoes
-  {
-    const float cur = dly_target;
-    const float rel = (d > cur) ? (d - cur) / cur : (cur - d) / cur;
-    if(rel > 0.02f) dly_target = d;
-  }
-  dly_fb = 0.45f;                                             // fixed feedback
 
   // -----------------------------------------------------------------
   // SAMPLE Speed
@@ -739,7 +647,7 @@ void loop() {
   // pick the band limited table: harmonics may pass nyquist (24 kHz) a little,
   // as long as what folds back lands above ~20 kHz (28 kHz / 48 kHz = 0.583)
   uint32_t lvl = 0;
-  const float max_harm = 0.583f / inc;
+  const float max_harm = 0.583f / (inc * wt_sync);     // the wave runs ratio x faster
   while(lvl < WT_LEVELS - 1 && (float)wt_level_harm[lvl] > max_harm) lvl++;
   wt_level = lvl;
 
