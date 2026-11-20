@@ -35,7 +35,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.8.0-beta"
+#define HIMALIA_FW_VERSION "0.9.0-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -471,10 +471,16 @@ static inline __attribute__((always_inline)) int32_t wtSample(const uint8_t *t, 
   const int32_t v = (i & 1) ? ((p[1] >> 4) | (p[2] << 4)) : (p[0] | ((p[1] & 0x0F) << 8));
   return v - 2048;
 }
-static inline __attribute__((always_inline)) float wtRead(const uint8_t *t, uint32_t i0, float frac) {
-  const float a = (float)wtSample(t, i0);
-  const float b = (float)wtSample(t, (i0 + 1) & (WT_LEN - 1));
-  return a + (b - a) * frac;
+// 4-point cubic (Hermite) interpolation: much fewer images than linear
+static inline __attribute__((always_inline)) float wtRead(const uint8_t *t, uint32_t i0, uint32_t mask, float f) {
+  const float ym1 = (float)wtSample(t, (i0 - 1) & mask);
+  const float y0  = (float)wtSample(t, i0);
+  const float y1  = (float)wtSample(t, (i0 + 1) & mask);
+  const float y2  = (float)wtSample(t, (i0 + 2) & mask);
+  const float c1 = 0.5f * (y1 - ym1);
+  const float c2 = ym1 - 2.5f * y0 + 2.0f * y1 - 0.5f * y2;
+  const float c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1);
+  return ((c3 * f + c2) * f + c1) * f + y0;
 }
 
 // triangle wavefolder: keeps reflecting the signal back into -1 ... +1
@@ -588,8 +594,11 @@ void renderAudio() {
 
     float ph = wt_phase;
     if(ph < 0.0f) ph = 0.0f;
-    const float    pos  = ph * (float)WT_LEN;
-    const uint32_t i0   = ((uint32_t)pos) & (WT_LEN - 1);
+    const uint32_t lvl  = wt_level;
+    const uint32_t len  = wt_level_len[lvl];
+    const uint32_t mask = len - 1;
+    const float    pos  = ph * (float)len;
+    const uint32_t i0   = ((uint32_t)pos) & mask;
     const float    frac = pos - (float)(uint32_t)pos;
 
     const float    m    = wt_morph;
@@ -599,9 +608,9 @@ void renderAudio() {
     const float    mf   = m - (float)w0;
 
     const uint32_t base = wt_table * WT_WAVES;
-    const uint32_t lvl  = wt_level;
-    const float a = wtRead(wavetables[base + w0][lvl], i0, frac);
-    const float b = wtRead(wavetables[base + w1][lvl], i0, frac);
+    const uint32_t off  = wt_level_off[lvl];
+    const float a = wtRead(wavetables[base + w0] + off, i0, mask, frac);
+    const float b = wtRead(wavetables[base + w1] + off, i0, mask, frac);
     float out = (a + (b - a) * mf) * (1.0f / 2048.0f);    // -1 ... +1
 
     if(lpg_mode){
@@ -691,10 +700,10 @@ void loop() {
   if(inc > 0.45f) inc = 0.45f;
   wt_inc = inc;
 
-  // pick the band limited table: harmonics may pass nyquist (24 kHz) a little,
-  // as long as what folds back lands above ~20 kHz (28 kHz / 48 kHz = 0.583)
+  // pick the band limited version (one per octave)
   uint32_t lvl = 0;
-  const float max_harm = 0.583f / inc;
+  // strict: the highest harmonic stays below ~20 kHz, so nothing folds back
+  const float max_harm = (20000.0f / samplerate) / inc;
   while(lvl < WT_LEVELS - 1 && (float)wt_level_harm[lvl] > max_harm) lvl++;
   wt_level = lvl;
 

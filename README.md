@@ -42,8 +42,8 @@ SAMPLE OUT is now a wavetable oscillator:
 | control                     | function                                   |
 |-----------------------------|--------------------------------------------|
 | SAMPLE TUNE knob + CV       | pitch: knob 16 Hz ... 8 kHz, CV -10 ... +10 V at 1 V/oct |
-| SAMPLE SELECT knob + CV     | scan through the 64 waves; CV -10 ... +10 V = whole table |
-| RATCHET knob + CV           | wavetable select (8 tables)                |
+| SAMPLE SELECT knob + CV     | scan through the 48 waves; CV -10 ... +10 V = whole table |
+| RATCHET knob + CV           | wavetable select (10 tables)               |
 | A/B button (sample side)    | LPG mode: short / long decay               |
 | CLOCK RATE knob             | wavefolder after the LPG: clean ... 6 folds |
 | TRIGGER in / button         | phase reset (sync); opens the LPG in LPG mode |
@@ -51,9 +51,9 @@ SAMPLE OUT is now a wavetable oscillator:
 
 Put Serum/Vital style wavetables (.wav, single-cycle frames, frame size read
 from the Serum `clm` chunk, otherwise 2048) in `wavetables/`. They are used in
-file name order, so prefix them `01_`, `02_` ... Default 8 tables of 64 waves
-(packed 12 bit, 768 KB); other layouts with `--tables` / `--waves`, e.g.
-16 x 32. Free slots get the built-in "basic" (sine > triangle > saw > square >
+file name order, so prefix them `01_`, `02_` ... Default 10 tables of 48 waves
+(packed 12 bit, 945 KB); other layouts with `--tables` / `--waves`, e.g.
+8 x 60. Free slots get the built-in "basic" (sine > triangle > saw > square >
 pulse) and "formant" tables. Frames are picked evenly from each file. Then in docker:
 ```
 pip3 install numpy               # once, makes the converter fast (optional)
@@ -68,7 +68,13 @@ upside down compared to their neighbour are flipped (`--no-level` turns this off
 CV calibration: open the USB serial port at 115200 baud; the module prints the
 raw tune / scan CV readings twice a second. Set `CV_ZERO_ADC` and
 `CV_COUNTS_PER_VOLT` in `HimaliaSketch.ino` from readings at 0 V and e.g. +5 V.
-Every wave is stored band limited in 4 versions so high notes do not alias.
+Every wave is stored band limited in 7 versions, one per octave, and the
+firmware picks the one whose highest harmonic stays below 20 kHz. The low
+versions are stored with many more points than harmonics and the firmware
+reads them with cubic interpolation, so interpolation images stay low too
+(measured: non-harmonic content at least 42 dB, mostly 50-70 dB below the
+signal over the whole pitch range). Hard sync and the wavefolder add their
+own aliasing on top; that is part of how they sound.
 
 ### generative sequencer (replaces the spread presets)
 The 6 squares are a generative sequencer, Turing machine style: a 16 step
@@ -113,6 +119,7 @@ scripts in `IOCore/variant_IOCore/linker_scripts` now use the full 1 MB
 | wavetables, 2 tables          | ~181 KB       |
 | wavetables, 16 x 16 (16 bit)  | ~690 KB       |
 | wavetables, 8 x 64 (12 bit)   | ~820 KB       |
+| wavetables, 10 x 48, 7 levels | ~993 KB       |
 
 ### here is the uf2 bootloader for the samd51
 https://github.com/noscene/uf2-samdx1

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.0-beta
+
+- **10 wavetables** in plaats van 8 (erbij: Harmonic_Morph en de ingebouwde "basic"), elk **48 golfvormen**.
+- **Veel minder aliasing:** anti-aliasing per octaaf (7 versies per golfvorm, bovenste boventoon altijd onder 20 kHz), lange tabellen voor de lage versies en kubische interpolatie. Gemeten: het slechtste geval ging van -28 dB naar -42 dB, meestal -50 tot -70 dB.
+- De interne flash is nu bijna vol (993 KB van 1008 KB).
+
 ## v0.8.0-beta
 
 - **Clock rate-knop = wavefolder, schoon tot 6 folds**, ná de LPG: luider = meer vouwen, dus een pluk begint gevouwen en wordt ronder terwijl hij wegsterft.
