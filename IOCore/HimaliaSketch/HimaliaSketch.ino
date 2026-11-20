@@ -19,6 +19,8 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
+#define HIMALIA_FW_VERSION "0.1.0-beta"
+
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
 
@@ -244,7 +246,7 @@ void setup() {
 
   Serial.begin(115200);
   // while ( !Serial ) delay(10);   // wait for native usb
-  Serial.println("Himalia");
+  Serial.println("Himalia wavetable firmware " HIMALIA_FW_VERSION);
 
   /*
   flash.begin();
