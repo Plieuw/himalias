@@ -25,7 +25,7 @@
 //   - CLOCK RATE knob: sync ratio 1x (off) ... 8x, CV IN RATE adds to it
 //   - rate LED: on while sync is active
 //  The noise side DAC out carries the sequencer pitch CV
-//  (melody, 1 V/oct; SQUARES MAIN TUNE sets the base, -5 V fully left).
+//  (melody, 1 V/oct, 0 ... +5 V; SQUARES MAIN TUNE shifts it up).
 //
 //  Other changes against the factory firmware:
 //   - linker scripts use the full 1 MB flash of the ATSAMD51J20A
@@ -33,7 +33,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.6.0-beta"
+#define HIMALIA_FW_VERSION "0.6.1-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -377,8 +377,8 @@ volatile uint32_t seq_steps_pending = 0;   // set by the audio interrupt on each
 #define SEQ_CV_CODES_PER_V  365.3f
 volatile uint16_t seq_cv_code = 2210;
 static float      seq_mel_volts = 0.0f;    // melody above the lowest note (1 V/oct)
-#define SEQ_CV_MIN_V      (-5.0f)          // knob fully left
-#define SEQ_CV_MAX_V      ( 5.1f)          // highest voltage the output stage can make
+#define SEQ_CV_MIN_V      ( 0.0f)          // knob fully left: lowest note at 0 V
+#define SEQ_CV_MAX_V      ( 5.0f)          // knob fully right: highest note at +5 V
 #define SEQ_MEL_RANGE_V   (22.0f / 12.0f)  // highest melody note above the lowest
 static uint16_t   seq_reg   = 0xB3A5;      // 16 bit loop, the "Turing machine" register
 static uint32_t   seq_pos   = 0;           // step counter
@@ -664,9 +664,8 @@ void loop() {
 
   float inc_sqr = adc51.adcToInc[sqr_pitch_sum];
 
-  // Sequencer pitch CV out: knob fully left = -5 V for the lowest note; the
-  // knob range stops where the highest melody note reaches the top of the
-  // output (+5.1 V), so the melody is never cut off.
+  // Sequencer pitch CV out, positive only: knob fully left = lowest note at
+  // 0 V, fully right = highest note at +5 V, so the melody is never cut off.
   {
     const float base = SEQ_CV_MIN_V + (float)sqr_pitch_sum * ((SEQ_CV_MAX_V - SEQ_MEL_RANGE_V - SEQ_CV_MIN_V) / 4000.0f);
     int32_t code = (int32_t)(SEQ_CV_ZERO_CODE + (base + seq_mel_volts) * SEQ_CV_CODES_PER_V + 0.5f);
