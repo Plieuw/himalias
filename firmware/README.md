@@ -7,3 +7,4 @@ open the USB serial port at 1200 baud) and copy one .uf2 to the HIMALIA drive.
 - `Himalia_wavetables_16x16.uf2` - 16 tables x 16 waves (previous version)
 - `Himalia_samples.uf2`    - original sample player, with the fixes
 - `../Himalia_BODFIX.uf2`  - factory firmware
+- `Himalia_QSPI_test.uf2`        - test only: checks the 16 MB QSPI flash chip, report on the USB serial port (115200 baud)
