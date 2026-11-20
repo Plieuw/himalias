@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.0-beta
+
+- **Wavetables nagelopen:** (bijna) stille frames worden overgeslagen, plotseling zachte frames worden opgehaald en frames die in fase omgedraaid zijn worden teruggedraaid. Scannen heeft geen plotselinge gaten meer; geleidelijke verlopen blijven.
+- **CV in sample tune en sample select zijn bipolair: -10 tot +10 V.** Tune: 1 V/oct bovenop de knop. Select: ±10 V scant de hele tabel. De ijking is berekend uit het schema; met de seriële monitor (115200 baud) zie je de ruwe waarden om bij te stellen.
+
 ## v0.3.1-beta
 
 - **CV in rate (noise-kant) is nu de klokingang van de delay.** Gate/trigger, hoog boven ~2V. Niet ingeplugd, of 4 s geen pulsen: de delay volgt de sample-trigger.

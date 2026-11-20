@@ -35,7 +35,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.3.1-beta"
+#define HIMALIA_FW_VERSION "0.4.0-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -651,6 +651,20 @@ void renderAudio() {
 
 
 
+//
+//  Bipolar CV inputs. The input stage (buffer + 20k / 6k8 to 3V3 / 10k to GND)
+//  maps about -10 V ... +10 V onto the ADC, with 0 V near the middle.
+//  The values below come from the resistor values in the schematic; measure
+//  your module with the serial monitor (115200 baud, see below) to fine tune.
+//
+#define CV_ZERO_ADC        2028.0f   // ADC reading at 0 V
+#define CV_COUNTS_PER_VOLT  208.9f   // ADC steps per volt
+#define CV_UNPATCHED        4090     // reading of an unpatched (normalled) jack
+
+static inline float cvVolts(uint16_t adc) {
+  return ((float)adc - CV_ZERO_ADC) * (1.0f / CV_COUNTS_PER_VOLT);
+}
+
 void loop() {
 
   // Delay: CLOCK RATE knob = division of the clock
@@ -686,18 +700,15 @@ void loop() {
   // SAMPLE Speed
   uint16_t sample_pitch_poti = adc51.readAnalog(PA07,ADC_Channel7,false); 
   uint16_t sample_pitch_jack = adc51.readAnalog(PB06,ADC_Channel8,true);   // ADC1 AIN8 = PB06 (was PA06)  
-  uint16_t sample_pitch_sum =  sample_pitch_poti;
-  if(sample_pitch_jack<4095){  // if is connected
-     sample_pitch_sum += sample_pitch_jack;
-  }
-  if(sample_pitch_sum > 4095){
-    sample_pitch_sum = 4095;
-  }
-  // Wavetable pitch: WT_PITCH_OCTAVES octaves over the full ADC range,
-  // starting at WT_PITCH_LOW_HZ. Not calibrated to exact 1V/oct.
+  // Wavetable pitch: knob = WT_PITCH_OCTAVES octaves from WT_PITCH_LOW_HZ,
+  // CV = bipolar -10 ... +10 V, 1 V per octave on top of the knob.
   const float WT_PITCH_LOW_HZ  = 16.35f;   // C0
   const float WT_PITCH_OCTAVES = 9.0f;
-  float wt_hz = WT_PITCH_LOW_HZ * exp2f((float)sample_pitch_sum * (WT_PITCH_OCTAVES / 4095.0f));
+  float pitch_oct = (float)sample_pitch_poti * (WT_PITCH_OCTAVES / 4095.0f);
+  if(sample_pitch_jack < CV_UNPATCHED)                  // jack in use
+    pitch_oct += cvVolts(sample_pitch_jack);            // 1V/oct
+  float wt_hz = WT_PITCH_LOW_HZ * exp2f(pitch_oct);
+  if(wt_hz < 4.0f) wt_hz = 4.0f;
   float inc = wt_hz * reciprocal_sr;
   if(inc > 0.45f) inc = 0.45f;
   wt_inc = inc;
@@ -746,13 +757,13 @@ void loop() {
 
 
   uint16_t prg8_smpl_select_adc = adc51.readAnalog(PA06,ADC_Channel6,false);
-  if(cv_sample_select_adc < 4000 ) // if jack is conneced (no normalized)
-    prg8_smpl_select_adc+=cv_sample_select_adc;
-  
+
   bool bankB = !(PORT->Group[PORTA].IN.reg & (1ul << 20));   // PA20 button A/B
 
   // Wavetable morph: continuous 0 ... 15, lightly smoothed against zipper noise
   float morph_target = (float)((int32_t)prg8_smpl_select_adc - 310) * ((float)(WT_WAVES - 1) / (3750.0f - 310.0f));
+  if(cv_sample_select_adc < 4000)                       // scan CV: -10 ... +10 V
+    morph_target += cvVolts(cv_sample_select_adc) * ((float)(WT_WAVES - 1) / 10.0f);
   if(morph_target < 0.0f) morph_target = 0.0f;
   if(morph_target > (float)(WT_WAVES - 1)) morph_target = (float)(WT_WAVES - 1);
   static float morph_smooth = 0.0f;
@@ -769,26 +780,17 @@ void loop() {
   static uint16_t table_state = 0;
   wt_table = selectHyst(table_adc, 300, 3750, WT_TABLES - 1, table_state);
 
-/** /
-
-  static int dsbug = 0;
-  dsbug++;
-  if(!(dsbug % 500)){
-    Serial.print(wt_table,DEC);
-    Serial.print(" ");
-    Serial.print(prg8_smpl_select);
-    Serial.print(" ");
-    Serial.print(prg8_smpl_select_adc,DEC);
-    Serial.print(" ");
-    Serial.print(cv_sample_select_adc,DEC);
-//    Serial.print(" PA:");
-//    Serial.print(PORT->Group[PORTA].IN.reg,BIN);
-//    Serial.print(" PB:");
-//    Serial.print(PORT->Group[PORTB].IN.reg,BIN);
-    Serial.print(" ");
-    Serial.println(spread,DEC);
+  // Serial monitor (115200 baud): raw CV readings, twice per second, for calibration
+  static uint32_t dbg_ms = 0;
+  if(Serial && millis() - dbg_ms > 500){
+    dbg_ms = millis();
+    Serial.print("tune_cv ");  Serial.print(sample_pitch_jack);
+    Serial.print(" (");        Serial.print(cvVolts(sample_pitch_jack), 2);
+    Serial.print(" V)  scan_cv "); Serial.print(cv_sample_select_adc);
+    Serial.print(" (");        Serial.print(cvVolts(cv_sample_select_adc), 2);
+    Serial.print(" V)  tune_knob "); Serial.print(sample_pitch_poti);
+    Serial.print("  scan_knob "); Serial.println(prg8_smpl_select_adc);
   }
-/**/
 
 
 }

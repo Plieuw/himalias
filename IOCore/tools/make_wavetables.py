@@ -158,6 +158,22 @@ def table_from_wav(path, default_frame):
     # spread WAVES picks over the file; with fewer frames, frames repeat so the
     # knob still covers the whole table evenly
     picks = [round(i * (frames - 1) / (WAVES - 1)) for i in range(WAVES)] if frames > 1 else [0] * WAVES
+    # skip (almost) silent frames: take the nearest frame that has sound
+    rms = []
+    for f in range(frames):
+        fr = data[f * frame_len:(f + 1) * frame_len]
+        mean = sum(fr) / len(fr)
+        rms.append(math.sqrt(sum((x - mean) ** 2 for x in fr) / len(fr)))
+    med = sorted(rms)[len(rms) // 2] or 1e-9
+    ok = [f for f in range(frames) if rms[f] >= 0.08 * med]
+    moved = 0
+    if ok:
+        for i, p in enumerate(picks):
+            if rms[p] < 0.08 * med:
+                picks[i] = min(ok, key=lambda f: abs(f - p))
+                moved += 1
+    if moved:
+        print("    %d silent frame(s) replaced by the nearest frame with sound" % moved)
     return [spectrum_of_frame(data[p * frame_len:(p + 1) * frame_len]) for p in picks], frames, frame_len
 
 
@@ -187,6 +203,37 @@ def render(spec, harmonics):
     return out
 
 
+def _rms(v):
+    return math.sqrt(sum(x * x for x in v) / len(v))
+
+
+def level_table(rendered, name):
+    """Even out a table for smooth scanning:
+       - waves much quieter than the rest of the table are turned up (max 16x),
+         so a scan has no sudden soft spots (gradual fades stay audible as
+         changes in timbre, not as holes in the volume)
+       - a wave that is upside down compared to the previous one is flipped,
+         otherwise the crossfade between them cancels out halfway"""
+    r0 = [_rms(w[0]) for w in rendered]
+    p75 = sorted(r0)[(len(r0) * 3) // 4] or 1e-9
+    target = 0.6 * p75                     # "normal" loudness of this table
+    boosted = flipped = 0
+    for i, w in enumerate(rendered):
+        if 0 < r0[i] < target:
+            g = min(16.0, target / r0[i])
+            rendered[i] = [[x * g for x in lv] for lv in w]
+            boosted += 1
+    for i in range(1, len(rendered)):
+        a, b = rendered[i - 1][0], rendered[i][0]
+        num = sum(x * y for x, y in zip(a, b))
+        den = math.sqrt(sum(x * x for x in a) * sum(y * y for y in b)) or 1e-9
+        if num / den < 0.0:
+            rendered[i] = [[-x for x in lv] for lv in rendered[i]]
+            flipped += 1
+    if boosted or flipped:
+        print("    %s: %d quiet wave(s) turned up, %d wave(s) flipped" % (name, boosted, flipped))
+
+
 def main():
     global WAVES, MAX_TABLES
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -195,6 +242,8 @@ def main():
     ap.add_argument("--frame", type=int, default=2048, help="frame size when the wav has no Serum clm chunk")
     ap.add_argument("--tables", type=int, default=MAX_TABLES, help="max number of tables (default 8)")
     ap.add_argument("--waves", type=int, default=WAVES, help="waves per table (default 64)")
+    ap.add_argument("--no-level", dest="level", action="store_false",
+                    help="keep the original loudness of every frame (no leveling / flipping)")
     a = ap.parse_args()
     WAVES, MAX_TABLES = a.waves, a.tables
     budget = MAX_TABLES * WAVES * LEVELS * (LEN * 3 // 2)
@@ -227,6 +276,8 @@ def main():
     out.append("\nstatic const uint8_t wavetables[WT_TABLES * WT_WAVES][WT_LEVELS][WT_BYTES] = {\n")
     for t, (name, spec_list) in enumerate(tables):
         rendered = [[render(spec, h) for h in LEVEL_HARM] for spec in spec_list]
+        if a.level:
+            level_table(rendered, name)
         # one scale per table, so the morph keeps the loudness relations of the original
         tpeak = max(max(abs(v) for v in lv[0]) for lv in rendered) or 1.0
         for w, levels in enumerate(rendered):

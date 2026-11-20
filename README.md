@@ -41,8 +41,8 @@ SAMPLE OUT is now a wavetable oscillator:
 
 | control                     | function                                   |
 |-----------------------------|--------------------------------------------|
-| SAMPLE TUNE knob + CV       | pitch (about 16 Hz ... 8 kHz)              |
-| SAMPLE SELECT knob + CV     | scan through the 64 waves of a table       |
+| SAMPLE TUNE knob + CV       | pitch: knob 16 Hz ... 8 kHz, CV -10 ... +10 V at 1 V/oct |
+| SAMPLE SELECT knob + CV     | scan through the 64 waves; CV -10 ... +10 V = whole table |
 | RATCHET knob + CV           | wavetable select (8 tables)                |
 | A/B button (sample side)    | wavefolder on / off (LPG mode: short/long decay) |
 | TRIGGER in / button         | phase reset (sync); opens the LPG in LPG mode |
@@ -60,6 +60,13 @@ pip3 install numpy               # once, makes the converter fast (optional)
 . /PRJ/build.sh
 ```
 The table order is listed at the top of `IOCore/HimaliaSketch/wavetables.h`.
+The converter also levels each table for smooth scanning: (almost) silent
+frames are skipped, sudden quiet frames are turned up and frames that are
+upside down compared to their neighbour are flipped (`--no-level` turns this off).
+
+CV calibration: open the USB serial port at 115200 baud; the module prints the
+raw tune / scan CV readings twice a second. Set `CV_ZERO_ADC` and
+`CV_COUNTS_PER_VOLT` in `HimaliaSketch.ino` from readings at 0 V and e.g. +5 V.
 Every wave is stored band limited in 4 versions so high notes do not alias.
 
 ### generative sequencer (replaces the spread presets)
