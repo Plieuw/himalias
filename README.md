@@ -85,17 +85,23 @@ Voices: melody, sub octave, two harmonies, octave up and a drone that moves
 now and then. Per step the register decides which voices sound, their pulse
 width and which filter caps are switched in.
 
-### hard sync (replaces the digital noise / sample & hold)
-Oscillator hard sync on the wavetable: the wave is read at a multiple of the
-pitch and restarts on every pitch cycle.
+### real oscillator sync (replaces the digital noise / sample & hold)
+Patch the waveform of another oscillator (the master) into CV IN RATE. Every
+rising zero crossing restarts the wavetable; the exact crossing time between
+two samples is interpolated, so the sync is tight. Not an effect: the
+wavetable really follows the external oscillator.
 
 | control                     | function                                   |
 |-----------------------------|--------------------------------------------|
-| CLOCK RATE knob             | sync ratio 1x (off) ... 8x                 |
-| CV IN RATE                  | adds to the ratio, bipolar, ~0.7 per volt (max 16x) |
-| rate LED                    | on while sync is active                    |
+| CV IN RATE jack             | sync input (master waveform, ±10 V ok, needs to swing through 0 V) |
+| CLOCK RATE knob             | soft (left) ... hard (right) sync          |
+| rate LED                    | on while a sync signal comes in            |
 
-The analog noise section is unchanged.
+Hard sync restarts the wave on every master cycle. Towards soft, the wave
+is only restarted when it is already near the end of its own cycle, so it
+gets pulled along when it is close to a multiple of the master pitch.
+The jack is sampled every audio tick on ADC0; knob readings on ADC0 are
+interleaved with it.
 
 ### flash size
 The Himalia uses an ATSAMD51J20A with 1 MB flash. The old linker script only

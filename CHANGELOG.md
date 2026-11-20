@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.7.0-beta
+
+- **Echte oscillator-sync in plaats van de interne sync-verhouding.** Patch de golfvorm van een andere module in **CV in rate**: elke stijgende nuldoorgang herstart de wavetable (exact tussen twee samples geïnterpoleerd).
+- **Clock rate-knop: soft ↔ hard.** Rechts = hard sync (elke master-cyclus), naar links = soft sync (alleen herstarten als de golfvorm al bijna rond is, dus "meetrekken").
+- Rate-ledje brandt zolang er een sync-signaal binnenkomt. Zonder kabel: geen sync.
+
 ## v0.6.2-beta
 
 - **Squares volgen dezelfde schaal als de sequencer-CV:** 0 V = C2 (65 Hz), 1 V/oct. Main tune links: laagste noot C2, rechts: hoogste noot 5 octaven hoger. Een VCO op de CV-uitgang (afgesteld op C2 bij 0 V) speelt dus dezelfde noten als de squares.

@@ -21,9 +21,10 @@
 //   - 6 voices: melody, sub octave, two harmonies, octave up, drone; the register
 //     decides per step which voices sound, their pulse width and filter cap
 //
-//  The digital noise / S&H is replaced by hard sync on the wavetable:
-//   - CLOCK RATE knob: sync ratio 1x (off) ... 8x, CV IN RATE adds to it
-//   - rate LED: on while sync is active
+//  The digital noise / S&H is replaced by real oscillator sync:
+//   - CV IN RATE jack: sync input, the waveform of another module
+//   - CLOCK RATE knob: soft (left) ... hard (right) sync
+//   - rate LED: on while a sync signal comes in
 //  The noise side DAC out carries the sequencer pitch CV
 //  (melody, 1 V/oct, 0 ... +5 V; SQUARES MAIN TUNE shifts it up).
 //
@@ -33,7 +34,7 @@
 //   - hysteresis on the spread selector
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "0.6.2-beta"
+#define HIMALIA_FW_VERSION "0.7.0-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -311,6 +312,8 @@ void setup() {
   zt4.enable(true);
 
   seqStep(0, false);   // start the squares with a defined pattern
+
+  adc51.beginSyncInput(PB01, ADC_Channel13);   // CV IN RATE = sync input, sampled in the audio interrupt
 }
 
 //
@@ -357,12 +360,21 @@ float             lpg_z1    = 0.0f;     // filter states (2 x one pole)
 float             lpg_z2    = 0.0f;
 uint32_t          lpg_hold  = 0;        // minimum gate length for short triggers
 //
-//  Hard sync on the wavetable (replaces the delay / digital noise)
-//    CLOCK RATE knob ... sync ratio 1x (off) ... 8x
-//    CV IN RATE ........ adds to the ratio (bipolar, about 0.7 per volt)
-//  The wave is read at ratio x the pitch and restarts every pitch cycle.
+//  Real oscillator sync (replaces the digital noise)
+//    CV IN RATE jack ... sync input: the waveform of another module (master).
+//                        Every rising zero crossing restarts the wavetable.
+//    CLOCK RATE knob ... soft <-> hard: right = hard sync (restart on every
+//                        master cycle), to the left the wave is only restarted
+//                        when it is already close to the end of its own cycle
+//                        (soft sync: it gets pulled along instead of cut).
+//  The jack is sampled every audio tick on ADC0; the exact moment of the zero
+//  crossing between two samples is interpolated, so the sync stays tight.
 //
-volatile float    wt_sync    = 1.0f;       // sync ratio
+#define SYNC_ZERO        2028      // ADC value at 0 V (same input stage as the other CV ins)
+#define SYNC_HYST          60      // must go ~0.3 V below 0 V before the next sync
+#define SYNC_UNPATCHED   4000      // normalled jack reads above this
+volatile float    sync_window = 1.0f;      // 1 = hard, small = soft
+volatile uint32_t sync_seen   = 0;         // ticks since the last sync edge (LED)
 volatile uint32_t audio_tick = 0;          // counts 48 kHz audio ticks
 
 //
@@ -493,7 +505,30 @@ static uint16_t selectHyst(int32_t v, int32_t lo, int32_t hi, int32_t maxStep, u
 void renderAudio() {
   //  PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
 
-  const uint32_t tick = ++audio_tick;   // audio tick counter (clock measurement)
+  ++audio_tick;
+
+  // ---- real sync: sample the sync input, look for a rising zero crossing
+  if(adc51.syncRunning && ADC0->INTFLAG.bit.RESRDY){
+    static int32_t sync_prev  = 4095;
+    static bool    sync_armed = false;
+    const int32_t v = ADC0->RESULT.reg;
+    ADC0->SWTRIG.bit.START = 1;                            // next sample
+    if(v < SYNC_UNPATCHED && sync_prev < SYNC_UNPATCHED){
+      if(v < SYNC_ZERO - SYNC_HYST) sync_armed = true;
+      if(sync_armed && sync_prev < SYNC_ZERO && v >= SYNC_ZERO){
+        sync_armed = false;
+        sync_seen  = 0;
+        // soft <-> hard: only restart when the wave is far enough in its cycle
+        if(wt_phase >= 1.0f - sync_window){
+          // where between the two samples did it cross? start the new cycle there
+          const float t = (float)(SYNC_ZERO - sync_prev) / (float)(v - sync_prev);
+          wt_phase = -t * wt_inc;          // + wt_inc below = (1 - t) x one tick
+        }
+      }
+    }
+    sync_prev = v;
+  }
+  if(sync_seen < 100000) sync_seen++;
 
   // SuperSQUARE Ramps generate binary pattern
   bool sqr_pins[6];
@@ -548,9 +583,9 @@ void renderAudio() {
     wt_phase += wt_inc;
     if(wt_phase >= 1.0f) wt_phase -= 1.0f;
 
-    float sp = wt_phase * wt_sync;                         // hard sync: slave phase
-    sp -= (float)(int32_t)sp;
-    const float    pos  = sp * (float)WT_LEN;
+    float ph = wt_phase;
+    if(ph < 0.0f) ph = 0.0f;
+    const float    pos  = ph * (float)WT_LEN;
     const uint32_t i0   = ((uint32_t)pos) & (WT_LEN - 1);
     const float    frac = pos - (float)(uint32_t)pos;
 
@@ -586,9 +621,9 @@ void renderAudio() {
     DAC->DATA[1].reg = (uint16_t)dl;            // SAMPLE OUT
     DAC->DATA[0].reg = seq_cv_code;             // noise side DAC out: sequencer pitch CV
 
-    // rate LED: on while sync is active
-    if(wt_sync > 1.02f) PORT->Group[PORTB].OUTSET.reg = 1ul << 0;
-    else                PORT->Group[PORTB].OUTCLR.reg = 1ul << 0;
+    // rate LED: on while a sync signal comes in
+    if(sync_seen < 2400) PORT->Group[PORTB].OUTSET.reg = 1ul << 0;
+    else                 PORT->Group[PORTB].OUTCLR.reg = 1ul << 0;
   }
 
   // PORT->Group[PORTA].OUTCLR.reg = 1ul << 22;
@@ -614,18 +649,15 @@ static inline float cvVolts(uint16_t adc) {
 
 void loop() {
 
-  // Hard sync: CLOCK RATE knob = ratio 1 ... 8, CV IN RATE adds (bipolar)
-  uint16_t sync_jack = adc51.readAnalog(PB01,ADC_Channel13,false);
+  // Sync: CLOCK RATE knob = soft (left) ... hard (right)
+  uint16_t sync_jack = 0;   // sampled in the audio interrupt, not here
   uint16_t sync_poti = adc51.readAnalog(PB02,ADC_Channel14,false);
   {
-    float r = 1.0f + (float)sync_poti * (7.0f / 4000.0f);
-    if(sync_jack < 4000) r += cvVolts(sync_jack) * 0.7f;
-    if(r < 1.0f)  r = 1.0f;
-    if(r > 16.0f) r = 16.0f;
-    static float r_smooth = 1.0f;
-    r_smooth += (r - r_smooth) * 0.2f;
-    wt_sync = r_smooth;
+    float k = (float)sync_poti * (1.0f / 4000.0f);
+    if(k > 1.0f) k = 1.0f;
+    sync_window = 0.08f + 0.92f * k * k;     // left: only the last 8% of a cycle, right: always
   }
+  (void)sync_jack;
 
   // -----------------------------------------------------------------
   // SAMPLE Speed
@@ -647,7 +679,7 @@ void loop() {
   // pick the band limited table: harmonics may pass nyquist (24 kHz) a little,
   // as long as what folds back lands above ~20 kHz (28 kHz / 48 kHz = 0.583)
   uint32_t lvl = 0;
-  const float max_harm = 0.583f / (inc * wt_sync);     // the wave runs ratio x faster
+  const float max_harm = 0.583f / inc;
   while(lvl < WT_LEVELS - 1 && (float)wt_level_harm[lvl] > max_harm) lvl++;
   wt_level = lvl;
 

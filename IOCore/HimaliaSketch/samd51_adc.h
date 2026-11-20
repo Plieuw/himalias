@@ -62,6 +62,15 @@ class SAMD51_ADC {
       while (ADC1->INTFLAG.bit.RESRDY == 0);   // Waiting for conversion to complete
       return ADC1->RESULT.reg;
     }else{
+      // ADC0 is shared with the audio interrupt, which samples the sync input
+      // (syncChannel) every tick. Block the interrupt for this one conversion,
+      // then hand ADC0 back with a fresh sync conversion running.
+      __disable_irq();
+      if(syncRunning){
+        uint32_t timeout = 2000;
+        while(ADC0->INTFLAG.bit.RESRDY == 0 && --timeout);   // let the running conversion finish
+        (void)ADC0->RESULT.reg;
+      }
       while( ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL ); //wait for sync
       ADC0->INPUTCTRL.bit.MUXPOS = channel; // Selection for the positive ADC input
       while( ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE ); //wait for sync
@@ -69,8 +78,31 @@ class SAMD51_ADC {
       while( ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE ); //wait for sync
       ADC0->SWTRIG.bit.START = 1;
       while (ADC0->INTFLAG.bit.RESRDY == 0);   // Waiting for conversion to complete
-      return ADC0->RESULT.reg;
+      uint16_t r = ADC0->RESULT.reg;
+      if(syncRunning) startSyncConversion();
+      __enable_irq();
+      return r;
     }
+  };
+
+  // --- sync input sampled by the audio interrupt on ADC0 ---
+  volatile bool syncRunning = false;
+  uint16_t      syncChannel = 13;
+
+  void startSyncConversion(){
+    while( ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL );
+    ADC0->INPUTCTRL.bit.MUXPOS = syncChannel;
+    while( ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL );
+    ADC0->SWTRIG.bit.START = 1;
+  };
+
+  void beginSyncInput(uint16_t pin, uint16_t channel){
+    pinPeripheral(pin, PIO_ANALOG);
+    syncChannel = channel;
+    ADC0->CTRLA.bit.ENABLE = 0x01;
+    while( ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE );
+    syncRunning = true;
+    startSyncConversion();
   };
 
   // see how to compute: https://electronics.stackexchange.com/questions/278050/making-voltmeter-accepting-bipolar-input-voltage-using-a-microcontroller
