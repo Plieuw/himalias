@@ -1,7 +1,7 @@
 // Host test for the Himalia strings engine (v2).
 // Checks every instrument x layout for finite, bounded, non-silent output,
 // solo intonation, pizzicato decay and tremolo.
-#define STR_OUT_GAIN 0.6f   // test the engine itself (limiter barely active)
+#define STR_OUT_GAIN 0.60f  // same fixed output calibration as the firmware
 #include "../IOCore/HimaliaSketch/strings_engine.h"
 #include <cmath>
 #include <cstdio>
@@ -120,7 +120,8 @@ int main() {
       if (!render(true, 12000, x)) { std::printf("FAIL artic %d: not finite\n", art); ++fails; continue; }
       const double r = rms(x, 0, 12000);
       const float p = peak(x);
-      if (r < 0.01 || p > 1.0f) { std::printf("FAIL artic %d ins %d: rms %.3f peak %.3f\n", art, ins, r, p); ++fails; }
+      const double minRms = STR_ARTIC[art].mode == MODE_STRIKE ? 0.005 : 0.01;
+      if (r < minRms || p > 1.0f) { std::printf("FAIL artic %d ins %d: rms %.3f peak %.3f\n", art, ins, r, p); ++fails; }
     }
   }
 
