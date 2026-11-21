@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.13.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.14.0-beta.uf2`
 
 ## Concept
 
@@ -217,6 +217,23 @@ air / wood modes and the bridge hill) driven by the bridge force, plus the
 direct string sound. Bodies nobody plays on are skipped. (v1.9 ... v1.12 had an
 impulse-response body; removed in v1.13: too heavy for the module.)
 
+**Sympathetic resonance** (v1.14): the open strings of the instrument that
+are not played ring along through the bridge when the note or one of its
+overtones fits them, and keep ringing after the release:
+- the real strings per instrument: violin G D A E, viola C G D A, cello
+  C G D A, double bass B E A D G (orchestral 5-string bass);
+- the string the note is played on (under bow and finger) does not ring;
+- lower instruments ring longer and couple more (violin 1.8 s ... bass 3.5 s);
+- the open strings follow the tuning of the pitch CV (offset from A = 440),
+  like a player tuning to the ensemble; mute damps them;
+- one set for player 1, one for the divisi players (their main family).
+Measured (0.5 s after release): matching notes ~-25 ... -31 dB, other notes
+~-37 ... -41 dB; ~2 % extra CPU on the host.
+
+**Dynamics** (v1.14): the string alone follows the bow speed unevenly from note
+to note, so the note level also follows the dynamic gate (about +4 dB from
+soft to medium, +3 ... 6 dB to full); without a dynamic gate nothing changes.
+
 **Air**: like a mix engineer's air shelf. The body filters the top octave
 away, so the air band (4th-order highpass at 9.5 kHz: bow hair, rosin, top
 harmonics) is taken from the strings themselves and added after the body,
@@ -241,7 +258,7 @@ depth per family (violin 5.6 Hz +-17 c ... cello 5.0 Hz +-21 c).
   release goes silent.
 - Measured on the host: intonation 0 ... +9 cents across the range; bow
   position changes brightness (ponticello bright, tasto dark).
-- Firmware builds: ~43 KB flash, ~84 KB RAM.
+- Firmware builds: ~44 KB flash, ~148 KB RAM.
 - **CPU load**: estimated ~80-85% of the time per sample with six players
   (v1.10 ... v1.13 add ~10 % on the host: vibrato, bowing, noise).
   CPU guard: when the audio interrupt takes more than 90% of the time per

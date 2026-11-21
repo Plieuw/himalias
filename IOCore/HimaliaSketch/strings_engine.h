@@ -46,6 +46,11 @@
 #define STR_SL_MIN 0.6f
 #endif
 #define STR_AIR_DEFAULT 0.5f    // air band level (0 = none)
+#define STR_SYM_STRINGS 5       // sympathetic resonance: up to 5 open strings (5-string bass)
+#define STR_SYM_LEN 1600        // delay per open string (bass B0 ~ 1540 samples)
+#ifndef STR_SYM_LEVEL
+#define STR_SYM_LEVEL 0.5f
+#endif
 
 enum StrFamily     : uint8_t { FAM_VIOLIN = 0, FAM_VIOLA, FAM_CELLO, FAM_BASS };
 // base ensembles
@@ -231,6 +236,20 @@ struct StrAir {
   float z[2][2][2];               // states (lead / divisi, stage 1 / 2)
 };
 
+// Sympathetic resonance: the open strings that are not played ring along
+// through the bridge when the played note (or one of its overtones) fits
+// them. One set for player 1, one for the divisi players (their main family).
+struct StrSym {
+  float buf[STR_SYM_STRINGS][STR_SYM_LEN];
+  float len[STR_SYM_STRINGS];     // loop length (samples)
+  float g[STR_SYM_STRINGS];       // loop gain (ring time)
+  float lp[STR_SYM_STRINGS];      // loop lowpass state (highs die faster)
+  float in, out;                  // input coupling, output level for this family
+  uint16_t w;
+  uint8_t fam;
+  uint8_t n;                      // strings this instrument has
+};
+
 struct StringsEngine {
   StrVoice v[STR_VOICES];
   StrMode body[STR_FAMILIES][STR_BODY_MODES];      // divisi players (2 ... 6)
@@ -240,6 +259,8 @@ struct StringsEngine {
   float dc2x, dc2y;
   float bodyDirect[STR_FAMILIES];
   StrAir airF;
+  StrSym sym[2];                  // sympathetic strings: player 1, divisi
+  float tuneRatio;                // how far the pitch CV sits from A = 440 (the open strings follow)
   // control (written from loop)
   float rootHz;
   float speed;                    // bow speed 0 ... 1
@@ -318,6 +339,15 @@ static const float STR_BODY[STR_FAMILIES][STR_BODY_MODES][3] = {
   { {  58, 10, 1.1f }, {  95, 16, 1.2f }, { 125, 16, 1.0f }, {  250, 6, 0.5f }, {  800, 2.5f, 0.5f }, { 1300, 5, 0.2f } },  // bass
 };
 static const float STR_BODY_DIRECT[STR_FAMILIES] = { 0.35f, 0.4f, 0.45f, 0.5f };
+// open strings per family (Hz): violin G D A E, viola C G D A, cello C G D A,
+// bass E A D G; how long they ring on their own (s) and how strongly the
+// bridge couples them (lower instruments ring longer and more)
+static const float STR_OPEN[STR_FAMILIES][STR_SYM_STRINGS] = {
+  { 196.0f, 293.66f, 440.0f, 659.26f, 0 }, { 130.81f, 196.0f, 293.66f, 440.0f, 0 },
+  { 65.41f, 98.0f, 146.83f, 220.0f, 0 },   { 30.87f, 41.2f, 55.0f, 73.42f, 98.0f } };
+static const uint8_t STR_SYM_COUNT[STR_FAMILIES] = { 4, 4, 4, 5 };   // orchestral bass: 5 strings (low B)
+static const float STR_SYM_RING[STR_FAMILIES]  = { 1.8f, 2.2f, 3.0f, 3.5f };
+static const float STR_SYM_GAIN[STR_FAMILIES]  = { 1.0f, 1.1f, 1.3f, 1.4f };
 // top end per family: the bodies radiate little above these (Hz)
 static const float STR_FAMILY_TOP[STR_FAMILIES] = { 5500.0f, 4500.0f, 3500.0f, 2000.0f };
 // vibrato per family: rate (Hz) and depth (relative pitch, 0.010 ~ +-17 cents)
@@ -435,6 +465,15 @@ static inline void stringsInit(StringsEngine &s) {
   s.trillPh = 0; s.trillInc = 9.0f / STR_SR; s.trillPrev = false;
   s.model = STR_MODELS[0]; s.articEff = ART_LEGATO;
   s.divisiMask = 0x3F;
+  s.tuneRatio = 1.0f;
+  for (int k = 0; k < 2; k++) {
+    StrSym &y = s.sym[k];
+    for (int j = 0; j < STR_SYM_STRINGS; j++) {
+      for (int n = 0; n < STR_SYM_LEN; n++) y.buf[j][n] = 0.0f;
+      y.len[j] = 200.0f; y.g[j] = 0.0f; y.lp[j] = 0.0f;
+    }
+    y.in = y.out = 0.0f; y.w = 0; y.fam = FAM_VIOLIN; y.n = 4;
+  }
   {                                                         // air band: 4th order highpass 9.5 kHz
     StrAir &a = s.airF;
     const float w = 6.2831853f * 9500.0f / STR_SR, al = sinf(w) / (2.0f * 0.707f), cw = cosf(w);
@@ -733,6 +772,39 @@ static inline void stringsControl(StringsEngine &s) {
   uint8_t used = 0;
   for (int i = 1; i < STR_VOICES; i++) if (s.v[i].active) used |= (uint8_t)(1 << s.v[i].family);   // divisi bodies
   s.famUsed = used;
+  // sympathetic strings: tuned like the instrument, following the pitch CV's
+  // offset from A = 440 (a player tunes to the ensemble)
+  {
+    const float semis = 12.0f * log2f(s.rootHz / 440.0f);
+    const float frac = semis - floorf(semis + 0.5f);
+    s.tuneRatio += (exp2f(frac / 12.0f) - s.tuneRatio) * 0.05f;
+    uint8_t cnt[STR_FAMILIES] = { 0, 0, 0, 0 };
+    for (int i = 1; i < STR_VOICES; i++) if (s.v[i].active) cnt[s.v[i].family]++;
+    uint8_t dfam = s.v[0].family;
+    for (int f = 0, best = 0; f < STR_FAMILIES; f++) if (cnt[f] > best) { best = cnt[f]; dfam = (uint8_t)f; }
+    float dhz = s.v[0].hz;                                   // a divisi player's note of that family
+    for (int i = 1; i < STR_VOICES; i++) if (s.v[i].active && s.v[i].family == dfam) { dhz = s.v[i].hz; break; }
+    const uint8_t fams[2] = { s.v[0].family, dfam };
+    const float notes[2] = { s.v[0].hz, dhz };
+    for (int k = 0; k < 2; k++) {
+      StrSym &y = s.sym[k];
+      const uint8_t f = fams[k];
+      y.fam = f;
+      y.n = STR_SYM_COUNT[f];
+      // the string the note is played on (highest open string at or below
+      // it) is under the bow and the finger: it does not ring along
+      int played = -1;
+      for (int j = 0; j < y.n; j++) if (STR_OPEN[f][j] * s.tuneRatio <= notes[k] * 1.01f) played = j;
+      for (int j = 0; j < y.n; j++) {
+        const float hz = STR_OPEN[f][j] * s.tuneRatio;
+        y.len[j] = strClamp(STR_SR / hz - 0.6f, 8.0f, (float)(STR_SYM_LEN - 4));   // minus the loop filter delay
+        y.g[j] = (j == played) ? 0.9f
+               : powf(0.001f, 1.0f / (STR_SYM_RING[f] * (s.mute ? 0.5f : 1.0f) * hz));
+      }
+      y.in = 0.02f * STR_SYM_GAIN[f];
+      y.out = STR_SYM_LEVEL * (s.mute ? 0.5f : 1.0f);
+    }
+  }
   s.model = M;
 }
 
@@ -745,6 +817,26 @@ static inline __attribute__((always_inline)) float strRead(const float *buf, uin
   i0 &= mask;
   const uint32_t i1 = (i0 + 1) & mask;
   return buf[i0] + (buf[i1] - buf[i0]) * fr;
+}
+
+// the open strings: feedback combs (all harmonics), highs damped in the loop
+static inline float strSymTick(StrSym &y, float x) {
+  const float in = x * y.in;
+  float out = 0.0f;
+  const uint16_t w = y.w;
+  for (int j = 0; j < y.n; j++) {
+    float rp = (float)w - y.len[j];
+    if (rp < 0.0f) rp += (float)STR_SYM_LEN;
+    uint32_t i0 = (uint32_t)rp;
+    const float fr = rp - (float)i0;
+    const uint32_t i1 = (i0 + 1 >= STR_SYM_LEN) ? 0 : i0 + 1;
+    const float r = y.buf[j][i0] + (y.buf[j][i1] - y.buf[j][i0]) * fr;
+    y.lp[j] += (r - y.lp[j]) * 0.6f;
+    y.buf[j][w] = in + y.g[j] * y.lp[j];
+    out += r;
+  }
+  y.w = (uint16_t)(w + 1 >= STR_SYM_LEN ? 0 : w + 1);
+  return out * y.out;
 }
 
 static inline float strAirHp(StrAir &a, int ch, float x) {
@@ -1066,8 +1158,20 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     const float tilt = 0.8f * (v.vel - 0.7f) + 0.3f * (v.bowMul - 1.0f);   // fast bow a bit brighter
     const float radiated = bridgeOut + (bridgeOut - v.prevB) * tilt + trHp * 0.06f;
     v.prevB = bridgeOut;
-    if (i == 0) leadBus = radiated * v.gain * v.bowGain * ovrGain;     // force on the bridge
-    else        famBus[v.family] += radiated * v.gain * v.bowGain * ovrGain;
+    // dynamics: the string alone follows the bow speed unevenly from note to
+    // note; a player also uses force and contact point, so the note level
+    // follows the dynamic gate too (1 = no dynamic gate = unchanged)
+    const float dyn = v.gain * v.bowGain * ovrGain * (0.45f + 0.55f * v.vel);
+    if (i == 0) leadBus = radiated * dyn;                    // force on the bridge
+    else        famBus[v.family] += radiated * dyn;
+  }
+
+  // ---- sympathetic resonance: the open strings ring along through the bridge
+  {
+    leadBus += strSymTick(s.sym[0], leadBus);
+    float d = 0.0f;
+    for (int f = 0; f < STR_FAMILIES; f++) d += famBus[f];
+    famBus[s.sym[1].fam] += strSymTick(s.sym[1], d);
   }
 
   // ---- bodies: player 1 through its own body, the divisi players through
@@ -1130,6 +1234,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
 
 // clear all string and body states (instrument change)
 static inline void stringsClear(StringsEngine &s) {
+  for (int k = 0; k < 2; k++) for (int j = 0; j < STR_SYM_STRINGS; j++) {
+    for (int n = 0; n < STR_SYM_LEN; n++) s.sym[k].buf[j][n] = 0.0f;
+    s.sym[k].lp[j] = 0.0f;
+  }
   for (int i = 0; i < STR_VOICES; i++) {
     StrVoice &v = s.v[i];
     for (int k = 0; k < STR_NECK_LEN; k++) v.neck[k] = 0;
