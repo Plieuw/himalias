@@ -1,55 +1,84 @@
 # Himalia Strings beta
 
-Branch: `himalia-strings-beta`
+Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-This is an isolated development line. The original `main` firmware remains unchanged.
+Firmware: `firmware/Himalia_strings_v1.1.0-beta.uf2`
 
-## Instrument concept
+## Concept
 
-Himalia's mono SAMPLE OUT is now driven by a CV-controlled bowed-string engine. One incoming pitch CV supplies the root note; ensemble intervals are generated internally from that pitch. It is not a polyphonic MIDI instrument.
+SAMPLE OUT is a bowed-string physical model: up to six bowed strings,
+generated from **one** pitch CV. Not a sample player and not polyphonic MIDI:
+the ensemble intervals come from the one incoming pitch. The six channels of
+the former squares sequencer now drive the **generative divisi**.
 
-## Current control mapping
+## Controls
 
 | Himalia control | Strings function |
 |---|---|
-| SAMPLE TUNE knob + CV | Root pitch; CV remains 1 V/oct |
-| A/B button (PA20) | Violin / cello |
-| RATCHET knob | Solo, unison section, octaves, fifths, major, minor, sus4 |
-| SAMPLE SELECT knob + CV | Bow pressure |
-| CLOCK RATE knob | Bow speed |
-| TRIGGER input / manual trigger | Note gate |
-| BIT switch | Holds the bow gate open |
-| CV IN RATE jack | Unassigned in this strings beta |
-| SAMPLE OUT | Mono sum of the active string voices |
+| SAMPLE TUNE knob + CV | pitch: knob 7 octaves from A0, CV 1 V/oct (-10 ... +10 V) |
+| RATCHET knob | instrument: solo violin, solo cello, violin section, cello section, full strings |
+| SPREAD knob + CV | layout: unison, octaves, fifths, major, minor, divisi major, divisi minor |
+| SAMPLE SELECT knob + CV | bow pressure |
+| CLOCK RATE knob | bow speed |
+| CV IN RATE jack | bow speed CV (0 ... +5 V). When patched, the CV alone can bow (swells without a gate) |
+| SQUARES MAIN TUNE knob + CV | bow position: sul tasto (left) ... normal ... sul ponticello (right) |
+| TRIGGER in / button | gate: bows while high; plucks in pizzicato; steps the divisi register |
+| A/B button (sample side) | A = arco, B = pizzicato |
+| A/B button (squares side) | A = vibrato, B = senza vibrato |
+| BIT switch | tremolo |
+| noise side DAC out | envelope follower, 0 ... +5 V |
+| PA22 (digital noise out) | 5 ms trigger when the divisi changes |
+| square outputs | silent (their sequencer drives the divisi) |
 
-The six square outputs and their generative sequencer are retained as auxiliary functions. The CV-driven bowed-string voice itself is monophonic at its input; chord layouts are generated from its one root pitch.
+Legato: change the pitch while the gate stays high and the players glide
+(~30 ms) without a new attack.
 
-## DSP engine
+## Instruments and layouts
 
-`IOCore/HimaliaSketch/strings_engine.h` contains a fixed-memory, header-only engine for the ATSAMD51:
+- **Solo violin / solo cello**: one player, the layout is ignored.
+- **Violin / cello section**: six players of the same family.
+- **Full strings**: violin I, violin II, viola, cello, cello, double bass, each
+  in their own register (unison = everyone on the note in their octave).
+- Layouts per player (semitones): see `STR_SECTION_LAYOUT` / `STR_FULL_LAYOUT`
+  in `strings_engine.h`.
+- **Divisi**: on every trigger the 16-bit Turing register shifts (25% chance the
+  bit flips); its bits pick which players play and which chord tone each takes
+  (pool: root, third, fifth, octave, tenth, twelfth, fourth below, two octaves).
+- Notes below an instrument's lowest open string are played an octave higher.
 
-- six independently tuned fractional-delay string voices;
-- separate violin and cello modal body banks;
-- nonlinear bow/string coupling prototype and bridge-loss filtering;
-- solo and six-voice ensemble modes;
-- unison, octave, fifth, major, minor and sus4 interval layouts;
-- per-voice vibrato phase offsets;
-- output DC blocking.
+## DSP (`IOCore/HimaliaSketch/strings_engine.h`)
 
-No sample playback, heap allocation or additional hardware is required. The engine is rendered at the existing 47.619 kHz audio interrupt rate.
+Per player:
+- digital waveguide string, split at the **bow position** into a bridge-side
+  and a nut-side segment;
+- **bow / string friction junction** (stick-slip): the friction curve depends
+  on the velocity difference between bow and string and on the bow pressure,
+  producing Helmholtz motion (the missing harmonics at the bow position appear
+  as in a real string, e.g. no 8th harmonic at 1/8);
+- lossy, frequency-dependent bridge reflection, rigid nut;
+- loop delay compensated for the bridge filter: intonation within a few cents;
+- pizzicato pluck, tremolo bow strokes, bow attack/release envelope.
 
-## Verification status
+Per family (violin, viola, cello, bass): a modal **body** (6 resonances:
+air / wood modes and the bridge hill) driven by the bridge force, plus the
+direct string sound. Bodies nobody plays on are skipped.
 
-- Host-side DSP smoke test: **passing**. GitHub Actions compiles the engine with C++11 and checks finite output, bounded peak level, non-silent solo output and six-voice ensemble activation.
-- Full ATSAMD51 firmware build: handled by the separate `Himalia firmware build` workflow; check its latest run before treating the firmware as build-verified.
-- Physical module listening, CV calibration and worst-case interrupt-time measurement: **not yet verified**.
+Ensemble humanisation, per player: static intonation (+-6 cents) plus slow
+drift (+-4 cents), own vibrato rate (5.0 - 6.2 Hz) and depth that fades in
+after the note starts, bow speed (+-10%) and pressure differences, onset delay
+up to 35 ms and release delay up to 15 ms.
 
-This remains an experimental bowed-string model, not an acoustically validated violin/cello emulation. The bow interaction, pitch stability, attack/release, body response and six-voice CPU budget still need listening tests and refinement.
+## Verification
 
-## Next DSP work
-
-1. Measure worst-case six-voice CPU time at 47.619 kHz.
-2. Tune bow friction, pressure response and onset behaviour against recorded reference notes.
-3. Refine the string model and body resonances for a more convincing violin/cello timbre.
-4. Calibrate output level and the physical CV/control ranges on the actual module.
-5. Test legato, tremolo and pizzicato as later articulation modes.
+- `tests/strings_engine_smoke.cpp` (GitHub Actions): every instrument x layout
+  finite, bounded and sounding; solo intonation within 10 cents for violin
+  G3 / A4 / A5 and cello C2 / C3 / C4; pizzicato decays; tremolo sounds;
+  release goes silent.
+- Measured on the host: intonation 0 ... +9 cents across the range; bow
+  position changes brightness (ponticello bright, tasto dark).
+- Firmware builds: 32 KB flash, 82 KB RAM.
+- **CPU load**: estimated ~75% of the time per sample with six players in full
+  strings. Not measured on the module yet: the serial monitor (115200 baud)
+  prints the worst interrupt time as `cpu xx%`. Above ~90% the audio will
+  glitch; then the voice count or body size has to come down.
+- Not yet verified on the module: listening, CV calibration, real CPU load.

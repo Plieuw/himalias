@@ -1,30 +1,34 @@
 //
-//  Himalia firmware -- bowed strings beta
+//  Himalia firmware -- Strings (bowed-string physical model), beta
 //
-//  SAMPLE OUT is a mono bowed-string model:
-//   - SAMPLE TUNE knob + CV ....... root pitch, CV is 1 V/oct
-//   - A/B button .................. violin / cello
-//   - RATCHET knob ................ solo / unison / octaves / fifths / major / minor / sus4
+//  SAMPLE OUT: up to six bowed strings from one pitch CV (strings_engine.h)
+//   - SAMPLE TUNE knob + CV ....... pitch (knob 7 octaves, CV 1 V/oct, -10 ... +10 V)
+//   - RATCHET knob ................ instrument: solo violin, solo cello, violin
+//                                   section, cello section, full strings
+//   - SPREAD knob + CV ............ layout: unison, octaves, fifths, major, minor,
+//                                   divisi major, divisi minor (sections only)
 //   - SAMPLE SELECT knob + CV ..... bow pressure
 //   - CLOCK RATE knob ............. bow speed
-//   - TRIGGER input / BIT switch .. bow gate
+//   - CV IN RATE jack ............. bow speed CV (expression); when patched the
+//                                   bow also plays without a gate (swells)
+//   - SQUARES MAIN TUNE knob + CV . bow position: sul tasto (left) ... sul ponticello
+//   - TRIGGER in / button ......... gate: bow while high, pluck in pizzicato
+//   - A/B button (sample side) .... arco / pizzicato
+//   - A/B button (squares side) ... A = vibrato, B = senza vibrato
+//   - BIT switch .................. tremolo
+//   - noise side DAC out .......... envelope follower, 0 ... +5 V
+//   - PA22 (digital noise out) .... 5 ms trigger when the divisi changes
 //
-//  The six square outputs and their generative sequencer remain available.
-//
-//  The 6 squares are a generative sequencer (Turing machine style):
-//   - clock: SAMPLE TRIGGER in / button, every trigger is one step
-//   - SQUARES MAIN TUNE knob + CV ... root pitch, same 1 V/oct scale as the CV out
-//   - SPREAD knob + CV .............. change: left = loop locked, right = random
-//   - A/B button (squares side) ..... scale: A = minor pentatonic, B = natural minor
-//   - noise side DAC out ............ melody pitch CV, 1 V/oct, 0 ... +5 V
-//   - PA22 (digital noise out) ...... 5 ms trigger whenever the melody note changes
+//  Generative divisi: the Turing register of the former squares sequencer
+//  (clocked by the trigger) chooses which players of the section play and
+//  which chord tone each one takes. The square outputs are silent.
 //
 //  Other changes against the factory firmware:
 //   - linker scripts use the full 1 MB flash of the ATSAMD51J20A
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.0.0-beta"
+#define HIMALIA_FW_VERSION "1.1.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -44,9 +48,9 @@ static void seqStep(uint16_t change_adc, bool scaleB);
 // incrementer bipolar = 2/SR * f 
 
 
-#include "strings_engine.h" // bowed violin/cello physical-model engine
+#include "strings_engine.h" // bowed strings physical model (v2)
 StringsEngine strings;
-volatile bool strings_gate = false;
+volatile bool strings_cv_bow = false;     // CV IN RATE patched and above ~0.25 V
 /*
 
 PA22 RandomOut    PWM Out ?
@@ -305,8 +309,14 @@ void setup() {
 
   seqStep(0, false);   // start the squares with a defined pattern
   stringsInit(strings);
-  stringsSetInstrument(strings, (PORT->Group[PORTA].IN.reg & (1ul << 20)) ? STR_VIOLIN : STR_CELLO);
-  stringsControl(strings, 220.0f, false, STR_UNISON, 0.35f, 0.45f, 0.0018f, 5.2f);
+  stringsControl(strings);
+  // cycle counter for the CPU load report on the serial monitor
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+  DWT->CYCCNT = 0;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+  // the square outputs are not used by the strings: park them low
+  PORT->Group[PORTA].OUTCLR.reg = (1ul << 19) | (1ul << 12);
+  PORT->Group[PORTB].OUTCLR.reg = (1ul << 15) | (1ul << 14) | (1ul << 13) | (1ul << 12);
   zt4.enable(true);
 }
 
@@ -396,48 +406,21 @@ static inline float semisToRatio(int32_t semis) {
 
 // one sequencer step: shift the register, maybe flip the bit, set the 6 voices
 static void seqStep(uint16_t change_adc, bool scaleB) {
-  // change probability: 0 (locked) ... 0.5 (completely random)
-  float p = (float)((int32_t)change_adc - 250) * (1.0f / (3700.0f - 250.0f));
-  if(p < 0.05f) p = 0.0f;                         // small dead zone: really locked
-  if(p > 1.0f)  p = 1.0f;
-  p *= 0.5f;
-
+  // Generative divisi: the Turing register changes a little on every trigger
+  // (25% chance per step that the bit flips), and decides who plays which tone.
+  (void)change_adc; (void)scaleB;
   uint16_t bit = seq_reg >> 15;
-  if((float)(seqRand() & 0xFFFF) < p * 65536.0f) bit ^= 1;
+  if((seqRand() & 3) == 0) bit ^= 1;
   seq_reg = (uint16_t)((seq_reg << 1) | bit);
   seq_pos++;
-
-  const int32_t n = scaleB ? 7 : 5;
-  if((seq_pos & 15) == 0 && (seqRand() & 3) == 0)          // drone moves sometimes, per loop
-    seq_drone = (int32_t)(seqRand() % 3) * (scaleB ? 2 : 1);
-
-  // melody: low 5 bits -> degree over ~2 octaves
-  const int32_t mel = (int32_t)(seq_reg & 0x1F) % (2 * n);
-  const uint16_t r = seq_reg;
-
-  // voice ratios relative to the MAIN TUNE pitch
-  spreads[0] = semisToRatio(seqSemis(mel, scaleB));             // melody
-
-  // melody as 1 V/oct above the lowest note; the pitch knob adds the base (loop)
-  const float new_mel = (float)seqSemis(mel, scaleB) * (1.0f / 12.0f);
-  // short trigger on PA22 whenever the melody moves to another note
-  if(new_mel != seq_mel_volts) seq_trig_ticks = SEQ_TRIG_TICKS;
-  seq_mel_volts = new_mel;
-  spreads[1] = semisToRatio(seqSemis(mel, scaleB) - 12);        // sub octave
-  spreads[2] = semisToRatio(seqSemis(mel + 2, scaleB));         // harmony (third / fourth)
-  spreads[3] = semisToRatio(seqSemis(mel + 4, scaleB));         // harmony (fifth)
-  spreads[4] = semisToRatio(seqSemis(mel, scaleB) + 12);        // octave up
-  spreads[5] = semisToRatio(seqSemis(seq_drone, scaleB) - 12);  // drone
-
-  // which voices sound on this step (melody always; others from register bits)
-  const bool on[6] = { true, (r & 0x0100) != 0, (r & 0x0200) != 0, (r & 0x0400) != 0,
-                       (r & 0x0800) != 0 && (r & 0x0020) != 0, true };
-  // pulse width per voice from the register: 50% ... ~20%
-  for(int i = 0; i < 6; i++){
-    const float pw = (float)((r >> (i * 2)) & 3) * 0.2f;      // 0, 0.2, 0.4, 0.6
-    sq_TRS[i]  = on[i] ? pw : 3.0f;                             // 3 = voice silent
-    flt_TRS[i] = ((r >> (i + 6)) & 1) ? -3.0f : 3.0f;           // filter cap per voice on / off
-  }
+  const uint8_t before = strings.divisiMask;
+  int8_t tones[STR_VOICES];
+  for(int i = 0; i < STR_VOICES; i++) tones[i] = strings.divisiTone[i];
+  stringsDivisi(strings, seq_reg);
+  bool changed = strings.divisiMask != before;
+  for(int i = 0; i < STR_VOICES; i++) if(tones[i] != strings.divisiTone[i]) changed = true;
+  if(changed && (strings.layout == LAY_DIVISI_MAJOR || strings.layout == LAY_DIVISI_MINOR))
+    seq_trig_ticks = SEQ_TRIG_TICKS;
 }
 
 // triangle wavefolder: keeps reflecting the signal back into -1 ... +1
@@ -468,36 +451,13 @@ static uint16_t selectHyst(int32_t v, int32_t lo, int32_t hi, int32_t maxStep, u
 //
 //  AUDIO RENDERER callback for a single sample
 //
+volatile uint32_t isr_cycles_max = 0;      // worst audio interrupt time (CPU load check)
+
 void renderAudio() {
+  const uint32_t isr_c0 = DWT->CYCCNT;
   //  PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
 
   ++audio_tick;
-
-// SuperSQUARE ramps generate the binary pattern.
-  bool sqr_pins[6];
-  bool flt_pins[6];
-  for(int i = 0 ; i < 6 ; i++){
-    thea[i]+=thea_inc[i];
-    if(thea[i]>1.0f) thea[i]-=2.0f;
-    sqr_pins[i] = (thea[i]>sq_TRS[i]); 
-    flt_pins[i] = (thea[i]>flt_TRS[i]); 
-  }
-  // Pin assign signals as fast as possible for generated binary pattern
-  if(sqr_pins[0])  PORT->Group[PORTA].OUTCLR.reg = 1ul << 19; else   PORT->Group[PORTA].OUTSET.reg = 1ul << 19;
-  if(sqr_pins[1])  PORT->Group[PORTA].OUTCLR.reg = 1ul << 12; else   PORT->Group[PORTA].OUTSET.reg = 1ul << 12;
-  if(sqr_pins[2])  PORT->Group[PORTB].OUTCLR.reg = 1ul << 15; else   PORT->Group[PORTB].OUTSET.reg = 1ul << 15;
-  if(sqr_pins[3])  PORT->Group[PORTB].OUTCLR.reg = 1ul << 14; else   PORT->Group[PORTB].OUTSET.reg = 1ul << 14;
-  if(sqr_pins[4])  PORT->Group[PORTB].OUTCLR.reg = 1ul << 13; else   PORT->Group[PORTB].OUTSET.reg = 1ul << 13;
-  if(sqr_pins[5])  PORT->Group[PORTB].OUTCLR.reg = 1ul << 12; else   PORT->Group[PORTB].OUTSET.reg = 1ul << 12;
-
-  if(flt_pins[0])  PORT->Group[PORTA].DIRSET.reg = 1ul << 13; else   PORT->Group[PORTA].DIRCLR.reg = 1ul << 13;
-  if(flt_pins[1])  PORT->Group[PORTA].DIRSET.reg = 1ul << 14; else   PORT->Group[PORTA].DIRCLR.reg = 1ul << 14;
-  if(flt_pins[2])  PORT->Group[PORTA].DIRSET.reg = 1ul << 15; else   PORT->Group[PORTA].DIRCLR.reg = 1ul << 15;
-  if(flt_pins[3])  PORT->Group[PORTA].DIRSET.reg = 1ul << 16; else   PORT->Group[PORTA].DIRCLR.reg = 1ul << 16;
-  if(flt_pins[4])  PORT->Group[PORTA].DIRSET.reg = 1ul << 17; else   PORT->Group[PORTA].DIRCLR.reg = 1ul << 17;
-  if(flt_pins[5])  PORT->Group[PORTA].DIRSET.reg = 1ul << 18; else   PORT->Group[PORTA].DIRCLR.reg = 1ul << 18;
-
-
 
   // Forward Button + Trigger to LED
   static bool     previous_trigger = false;
@@ -515,18 +475,28 @@ void renderAudio() {
 
 
 
-  strings_gate = previous_trigger || !(PORT->Group[PORTB].IN.reg & (1ul << 17)); // trigger gate or BIT bow hold
+  strings.tremolo = !(PORT->Group[PORTB].IN.reg & (1ul << 17));   // BIT switch: tremolo
+  const bool gate = previous_trigger || strings_cv_bow;
 
   {
     // Six-voice bowed-string engine; mono sum goes to SAMPLE OUT.
-    float out = stringsTick(strings, strings_gate);
+    float out = stringsTick(strings, gate);
+
+    // envelope follower for the noise side DAC out (0 ... +5 V)
+    static float follow = 0.0f;
+    const float a = out < 0 ? -out : out;
+    follow += (a - follow) * (a > follow ? 0.01f : 0.0003f);
 
     int32_t dl = 2048 + (int32_t)(out * 2047.0f);
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
     DAC->DATA[1].reg = (uint16_t)dl;            // SAMPLE OUT
-    DAC->DATA[0].reg = seq_cv_code;             // noise side DAC out: sequencer pitch CV
+    {
+      int32_t code = (int32_t)(SEQ_CV_ZERO_CODE + follow * 2.0f * 5.0f * SEQ_CV_CODES_PER_V);
+      if(code > 4095) code = 4095;
+      DAC->DATA[0].reg = (uint16_t)code;        // noise side DAC out: envelope
+    }
 
-    // sequencer trigger out (PA22, former digital noise out): 5 ms per new note
+    // trigger out (PA22, former digital noise out): 5 ms when the divisi changes
     if(seq_trig_ticks){
       seq_trig_ticks--;
       PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
@@ -536,7 +506,8 @@ void renderAudio() {
 
   }
 
-  // PORT->Group[PORTA].OUTCLR.reg = 1ul << 22;
+  const uint32_t isr_dt = DWT->CYCCNT - isr_c0;
+  if(isr_dt > isr_cycles_max) isr_cycles_max = isr_dt;
 }
 
 
@@ -559,120 +530,103 @@ static inline float cvVolts(uint16_t adc) {
 
 void loop() {
 
-  // CLOCK RATE knob -> bow speed.
+  // ---- bow speed: CLOCK RATE knob, CV IN RATE as expression
   uint16_t bow_speed_adc = adc51.readAnalog(PB02,ADC_Channel14,false);
-  float bow_speed = 0.05f + 0.90f * ((float)bow_speed_adc / 4095.0f);
+  uint16_t bow_cv_adc    = adc51.readAnalog(PB01,ADC_Channel13,false);
+  strings.speed = (float)bow_speed_adc * (1.0f / 4095.0f);
+  if(bow_cv_adc < SYNC_UNPATCHED){                       // patched: 0 ... +5 V
+    float c = cvVolts(bow_cv_adc) * 0.2f;
+    if(c < 0.0f) c = 0.0f;
+    if(c > 1.2f) c = 1.2f;
+    static float cs = 0.0f;
+    cs += (c - cs) * 0.2f;
+    strings.speedCV = cs;
+    strings_cv_bow = cs > 0.05f;                         // the CV alone can bow
+  } else {
+    strings.speedCV = 1.0f;
+    strings_cv_bow = false;
+  }
 
-  // -----------------------------------------------------------------
-  // SAMPLE Speed
-  uint16_t sample_pitch_poti = adc51.readAnalog(PA07,ADC_Channel7,false); 
-  uint16_t sample_pitch_jack = adc51.readAnalog(PB06,ADC_Channel8,true);   // ADC1 AIN8 = PB06 (was PA06)  
-  // Resonator pitch: knob = 7 octaves from 27.5 Hz (A0),
-  // CV = bipolar -10 ... +10 V, 1 V per octave on top of the knob.
-  const float RES_PITCH_LOW_HZ  = 27.5f;
-  const float RES_PITCH_OCTAVES = 7.0f;
-  float pitch_oct = (float)sample_pitch_poti * (RES_PITCH_OCTAVES / 4095.0f);
-  if(sample_pitch_jack < CV_UNPATCHED)                  // jack in use
-    pitch_oct += cvVolts(sample_pitch_jack);            // 1V/oct
-  float res_hz = RES_PITCH_LOW_HZ * exp2f(pitch_oct);
-  if(res_hz < 20.0f)   res_hz = 20.0f;
-  if(res_hz > 4000.0f) res_hz = 4000.0f;
+  // ---- pitch: SAMPLE TUNE knob + CV (1 V/oct)
+  uint16_t sample_pitch_poti = adc51.readAnalog(PA07,ADC_Channel7,false);
+  uint16_t sample_pitch_jack = adc51.readAnalog(PB06,ADC_Channel8,true);   // ADC1 AIN8 = PB06
+  const float PITCH_LOW_HZ  = 27.5f;
+  const float PITCH_OCTAVES = 7.0f;
+  float pitch_oct = (float)sample_pitch_poti * (PITCH_OCTAVES / 4095.0f);
+  if(sample_pitch_jack < CV_UNPATCHED)
+    pitch_oct += cvVolts(sample_pitch_jack);
+  float hz = PITCH_LOW_HZ * exp2f(pitch_oct);
+  if(hz < 20.0f)   hz = 20.0f;
+  if(hz > 3500.0f) hz = 3500.0f;
+  strings.rootHz = hz;
 
-
-  // -----------------------------------------------------------------
-  // SQR Speed
-  uint16_t sqr_pitch_poti = adc51.readAnalog(PB03,ADC_Channel15,false);  // Manual_6XSqr_Pitch Poti
-  uint16_t sqr_pitch_jack = adc51.readAnalog(PB04,ADC_Channel6,true);    // CV_6XSqr_Pitch Poti
-  uint16_t sqr_pitch_sum = ((sqr_pitch_poti + sqr_pitch_jack)  );
-  if(sqr_pitch_jack > 4000)
-    sqr_pitch_sum = sqr_pitch_poti;
-
-  if(sqr_pitch_sum>4000) sqr_pitch_sum=4000;
-
-
-  // Squares pitch and sequencer CV out use the same 1 V/oct scale, so the
-  // squares and a VCO on the CV output play the same notes.
-  //   knob fully left = lowest note at 0 V = SEQ_F0_HZ
-  //   knob fully right = highest note at +5 V (5 octaves above SEQ_F0_HZ)
-  const float base = SEQ_CV_MIN_V + (float)sqr_pitch_sum * ((SEQ_CV_MAX_V - SEQ_MEL_RANGE_V - SEQ_CV_MIN_V) / 4000.0f);
+  // ---- bow position: SQUARES MAIN TUNE knob + CV
+  //      left = sul tasto (0.30), middle ~ normal (0.11), right = sul ponticello (0.04)
+  uint16_t pos_poti = adc51.readAnalog(PB03,ADC_Channel15,false);
+  uint16_t pos_jack = adc51.readAnalog(PB04,ADC_Channel6,true);
+  uint16_t pos_sum = pos_poti;
+  if(pos_jack <= 4000) pos_sum += pos_jack;
+  if(pos_sum > 4000) pos_sum = 4000;
   {
-    int32_t code = (int32_t)(SEQ_CV_ZERO_CODE + (base + seq_mel_volts) * SEQ_CV_CODES_PER_V + 0.5f);
-    if(code < 0) code = 0;
-    if(code > 4095) code = 4095;
-    seq_cv_code = (uint16_t)code;
-  }
-  // squares phase runs -1 ... +1, so one cycle = 2.0 of phase
-  float inc_sqr = 2.0f * SEQ_F0_HZ * exp2f(base) * reciprocal_sr;
-  thea_inc[0]=  spreads[0] * inc_sqr;
-  thea_inc[1]=  spreads[1] * inc_sqr;
-  thea_inc[2]=  spreads[2] * inc_sqr;
-  thea_inc[3]=  spreads[3] * inc_sqr;
-  thea_inc[4]=  spreads[4] * inc_sqr;
-  thea_inc[5]=  spreads[5] * inc_sqr;
-
-  // -----------------------------------------------------------------
-  // Generative sequencer on the 6 squares (Turing machine style)
-  //   clock ........ SAMPLE TRIGGER in / button (every rising edge = 1 step)
-  //   MAIN TUNE .... root pitch (knob + CV, as before)
-  //   SPREAD ....... change: left = loop locked, right = every step new
-  //   A/B button ... scale: A = minor pentatonic, B = natural minor (aeolian)
-  while(seq_steps_pending){
-    seq_steps_pending--;
-    uint16_t spread_adc = adc51.readAnalog(PB05,ADC_Channel7,true);
-    seqStep(spread_adc, !(PORT->Group[PORTA].IN.reg & (1ul << 21)));
+    const float k = (float)pos_sum * (1.0f / 4000.0f);
+    static float b = 0.11f;
+    b += ((0.30f * powf(0.04f / 0.30f, k)) - b) * 0.1f;
+    strings.beta = b;
   }
 
-  
-
+  // ---- bow pressure: SAMPLE SELECT knob + CV
   uint16_t cv_sample_select_adc = adc51.readAnalog(PB09,ADC_Channel3,false);
+  uint16_t select_adc = adc51.readAnalog(PA06,ADC_Channel6,false);
+  float pr = (float)((int32_t)select_adc - 310) * (1.0f / (3750.0f - 310.0f));
+  if(cv_sample_select_adc < 4000) pr += cvVolts(cv_sample_select_adc) * 0.1f;
+  if(pr < 0.0f) pr = 0.0f;
+  if(pr > 1.0f) pr = 1.0f;
+  static float pr_s = 0.5f;
+  pr_s += (pr - pr_s) * 0.1f;
+  strings.pressure = pr_s;
 
+  // ---- buttons: A/B sample = arco / pizzicato, A/B squares = vibrato
+  strings.pizz    = !(PORT->Group[PORTA].IN.reg & (1ul << 20));
+  strings.vibrato =  (PORT->Group[PORTA].IN.reg & (1ul << 21)) != 0;
 
-  uint16_t prg8_smpl_select_adc = adc51.readAnalog(PA06,ADC_Channel6,false);
-
-  bool bankB = !(PORT->Group[PORTA].IN.reg & (1ul << 20));   // PA20 button A/B
-
-  // SELECT knob + CV -> timbre 0 ... 1 (lightly smoothed)
-  float tb_target = (float)((int32_t)prg8_smpl_select_adc - 310) * (1.0f / (3750.0f - 310.0f));
-  if(cv_sample_select_adc < 4000)                       // CV: -10 ... +10 V = whole range
-    tb_target += cvVolts(cv_sample_select_adc) * 0.1f;
-  if(tb_target < 0.0f) tb_target = 0.0f;
-  if(tb_target > 1.0f) tb_target = 1.0f;
-  static float tb_smooth = 0.5f;
-  tb_smooth += (tb_target - tb_smooth) * 0.1f;
-  // SAMPLE SELECT controls bow pressure in the string model.
-
-  // A/B selects the instrument; RATCHET selects solo/ensemble voicing.
-  const uint8_t instrument = bankB ? STR_CELLO : STR_VIOLIN;
-  uint16_t model_adc = adc51.readAnalog(PB07,ADC_Channel9,true);
-  static uint16_t model_state = 0;
-  const uint8_t mode = (uint8_t)selectHyst(model_adc, 300, 3750, 6, model_state);
-  static uint8_t previous_instrument = 255;
-  if(instrument != previous_instrument){
+  // ---- instrument (RATCHET) and layout (SPREAD), with hysteresis
+  uint16_t ins_adc = adc51.readAnalog(PB07,ADC_Channel9,true);
+  static uint16_t ins_state = 0;
+  const uint8_t ins = (uint8_t)selectHyst(ins_adc, 300, 3750, INS_COUNT - 1, ins_state);
+  uint16_t lay_adc = adc51.readAnalog(PB05,ADC_Channel7,true);
+  static uint16_t lay_state = 0;
+  strings.layout = (uint8_t)selectHyst(lay_adc, 250, 3700, LAY_COUNT - 1, lay_state);
+  if(ins != strings.instrument){
     __disable_irq();
-    stringsSetInstrument(strings, instrument);
+    strings.instrument = ins;
     stringsClear(strings);
     __enable_irq();
-    previous_instrument = instrument;
   }
-  // mode 0 = solo; modes 1..6 = unison, octaves, fifths, major, minor, sus4.
-  const bool ensemble = mode != 0;
-  const uint8_t chord = ensemble ? (uint8_t)(mode - 1) : STR_UNISON;
-  stringsControl(strings, res_hz, ensemble, chord,
-                 bow_speed, 0.05f + 0.90f * tb_smooth,
-                 0.0018f, 5.2f);
 
-  // Serial monitor (115200 baud): raw CV readings, twice per second, for calibration
+  // ---- generative divisi: one register step per trigger
+  while(seq_steps_pending){
+    seq_steps_pending--;
+    seqStep(0, false);
+  }
+
+  stringsControl(strings);
+
+  // Serial monitor (115200 baud): controls, twice per second
   static uint32_t dbg_ms = 0;
   if(Serial && millis() - dbg_ms > 500){
     dbg_ms = millis();
-    Serial.print("tune_cv ");  Serial.print(sample_pitch_jack);
-    Serial.print(" (");        Serial.print(cvVolts(sample_pitch_jack), 2);
-    Serial.print(" V)  scan_cv "); Serial.print(cv_sample_select_adc);
-    Serial.print(" (");        Serial.print(cvVolts(cv_sample_select_adc), 2);
-    Serial.print(" V)  tune_knob "); Serial.print(sample_pitch_poti);
-    Serial.print("  scan_knob "); Serial.print(prg8_smpl_select_adc);
-    Serial.print("  sqr_tune "); Serial.println(sqr_pitch_sum);
+    Serial.print("hz ");        Serial.print(strings.rootHz, 1);
+    Serial.print("  tune_cv "); Serial.print(cvVolts(sample_pitch_jack), 2);
+    Serial.print(" V  instr "); Serial.print(strings.instrument);
+    Serial.print("  layout ");  Serial.print(strings.layout);
+    Serial.print("  speed ");   Serial.print(strings.speed, 2);
+    Serial.print("  press ");   Serial.print(strings.pressure, 2);
+    Serial.print("  pos ");     Serial.print(strings.beta, 3);
+    Serial.print("  divisi ");  Serial.print(strings.divisiMask, BIN);
+    // worst audio interrupt in the last half second, as % of the time per sample
+    const uint32_t mx = isr_cycles_max;
+    isr_cycles_max = 0;
+    Serial.print("  cpu ");     Serial.print(100.0f * (float)mx / (F_CPU / samplerate), 0);
+    Serial.println("%");
   }
-
-
 }

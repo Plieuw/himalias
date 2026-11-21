@@ -1,54 +1,113 @@
+// Host test for the Himalia strings engine (v2).
+// Checks every instrument x layout for finite, bounded, non-silent output,
+// solo intonation, pizzicato decay and tremolo.
 #include "../IOCore/HimaliaSketch/strings_engine.h"
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
-static bool finiteRun(StringsEngine &s, bool gate, unsigned count,
-                      double &sum, double &sumSq, float &peak) {
+static StringsEngine s;
+
+static bool render(bool gate, unsigned count, std::vector<float> &out) {
+  out.resize(count);
   for (unsigned i = 0; i < count; ++i) {
+    if ((i & 127) == 0) stringsControl(s);
     const float y = stringsTick(s, gate);
     if (!std::isfinite(y)) return false;
-    sum += y;
-    sumSq += (double)y * (double)y;
-    if (std::fabs(y) > peak) peak = std::fabs(y);
+    out[i] = y;
   }
   return true;
 }
 
+static double rms(const std::vector<float> &x, unsigned from, unsigned to) {
+  double a = 0;
+  for (unsigned i = from; i < to; ++i) a += (double)x[i] * x[i];
+  return std::sqrt(a / (to - from));
+}
+
+static float peak(const std::vector<float> &x) {
+  float p = 0;
+  for (float v : x) if (std::fabs(v) > p) p = std::fabs(v);
+  return p;
+}
+
+// pitch by autocorrelation around the expected period, in cents
+static double centsOff(const std::vector<float> &x, unsigned from, unsigned to, double hz) {
+  const double T = STR_SR / hz;
+  const int lo = (int)(T * 0.8), hi = (int)(T * 1.25) + 2;
+  std::vector<double> ac(hi + 2, 0.0);
+  for (int lag = lo - 1; lag <= hi + 1; ++lag) {
+    double a = 0;
+    for (unsigned i = from; i + lag < to; ++i) a += (double)x[i] * x[i + lag];
+    ac[lag] = a;
+  }
+  int best = lo;
+  for (int lag = lo; lag <= hi; ++lag) if (ac[lag] > ac[best]) best = lag;
+  const double a = ac[best - 1], b = ac[best], c = ac[best + 1];
+  const double den = a - 2 * b + c;
+  const double d = den != 0 ? 0.5 * (a - c) / den : 0;
+  return 1200.0 * std::log2((STR_SR / (best + d)) / hz);
+}
+
 int main() {
-  StringsEngine s;
-  stringsInit(s);
-  stringsSetInstrument(s, STR_VIOLIN);
-  stringsControl(s, 220.0f, false, STR_UNISON, 0.35f, 0.45f, 0.0018f, 5.2f);
+  int fails = 0;
+  std::vector<float> x;
 
-  double sum = 0.0, sumSq = 0.0;
-  float peak = 0.0f;
-  if (!finiteRun(s, true, 120000, sum, sumSq, peak)) return 1;
-
-  const double mean = sum / 120000.0;
-  const double rms = std::sqrt(sumSq / 120000.0);
-  if (rms < 0.0001 || std::fabs(mean) > 0.08 || peak > 1.0f) {
-    std::fprintf(stderr, "solo output outside bounds: mean=%f rms=%f peak=%f\n",
-                 mean, rms, peak);
-    return 2;
+  // every instrument and layout: finite, bounded, sounding
+  for (int ins = 0; ins < INS_COUNT; ++ins) {
+    for (int lay = 0; lay < LAY_COUNT; ++lay) {
+      stringsInit(s);
+      s.instrument = (uint8_t)ins; s.layout = (uint8_t)lay;
+      s.rootHz = 261.6f; s.speed = 0.6f; s.pressure = 0.6f; s.beta = 0.11f;
+      if (lay >= LAY_DIVISI_MAJOR) stringsDivisi(s, 0xB3A5);
+      stringsControl(s);
+      if (!render(true, 60000, x)) { std::printf("FAIL ins %d lay %d: not finite\n", ins, lay); ++fails; continue; }
+      const double r = rms(x, 20000, 60000);
+      const float p = peak(x);
+      if (r < 0.02 || p > 1.0f) { std::printf("FAIL ins %d lay %d: rms %.3f peak %.3f\n", ins, lay, r, p); ++fails; }
+    }
   }
 
-  stringsControl(s, 110.0f, true, STR_MAJOR, 0.55f, 0.65f, 0.003f, 6.0f);
-  unsigned active = 0;
-  for (unsigned i = 0; i < STR_VOICES; ++i) if (s.voice[i].active) ++active;
-  if (active != STR_VOICES) return 3;
+  // solo intonation (no vibrato), violin and cello, several notes
+  const float vn[] = { 196.0f, 440.0f, 880.0f };
+  const float vc[] = { 65.41f, 130.8f, 261.6f };
+  for (int k = 0; k < 6; ++k) {
+    stringsInit(s);
+    s.instrument = k < 3 ? INS_SOLO_VIOLIN : INS_SOLO_CELLO;
+    s.rootHz = k < 3 ? vn[k] : vc[k - 3];
+    s.speed = 0.5f; s.pressure = 0.5f; s.beta = 0.11f; s.vibrato = false;
+    stringsControl(s);
+    s.v[0].len = s.v[0].lenTarget;
+    if (!render(true, 50000, x)) { ++fails; continue; }
+    const double c = centsOff(x, 25000, 50000, s.rootHz);
+    if (std::fabs(c) > 10.0) { std::printf("FAIL intonation %.1f Hz: %+.1f cents\n", s.rootHz, c); ++fails; }
+  }
 
-  sum = sumSq = 0.0;
-  peak = 0.0f;
-  if (!finiteRun(s, true, 120000, sum, sumSq, peak)) return 4;
-  if (peak > 1.0f || std::sqrt(sumSq / 120000.0) < 0.0001) return 5;
+  // pizzicato: plucked, then dies away
+  stringsInit(s);
+  s.instrument = INS_SOLO_VIOLIN; s.rootHz = 392.0f; s.pizz = true;
+  stringsControl(s);
+  if (!render(true, 95000, x)) ++fails;
+  else {
+    const double early = rms(x, 500, 5000), late = rms(x, 85000, 95000);
+    if (early < 0.02 || late > early * 0.2) { std::printf("FAIL pizzicato early %.3f late %.3f\n", early, late); ++fails; }
+  }
 
-  stringsSetInstrument(s, STR_CELLO);
-  stringsClear(s);
-  stringsControl(s, 65.406f, false, STR_UNISON, 0.25f, 0.50f, 0.0f, 5.2f);
-  sum = sumSq = 0.0;
-  peak = 0.0f;
-  if (!finiteRun(s, true, 120000, sum, sumSq, peak)) return 6;
+  // tremolo: bowing keeps sounding
+  stringsInit(s);
+  s.instrument = INS_VIOLIN_SECTION; s.rootHz = 392.0f; s.tremolo = true;
+  stringsControl(s);
+  if (!render(true, 60000, x) || rms(x, 20000, 60000) < 0.02) { std::printf("FAIL tremolo\n"); ++fails; }
 
-  std::printf("strings DSP smoke test passed; solo RMS=%f, peak=%f\n", rms, peak);
+  // release: silence after the gate closes
+  stringsInit(s);
+  s.instrument = INS_FULL_STRINGS; s.rootHz = 220.0f;
+  stringsControl(s);
+  render(true, 30000, x);
+  if (!render(false, 120000, x) || rms(x, 100000, 120000) > 0.005) { std::printf("FAIL release\n"); ++fails; }
+
+  if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
+  std::printf("strings DSP test passed (%d instruments x %d layouts, intonation, pizzicato, tremolo, release)\n",
+              (int)INS_COUNT, (int)LAY_COUNT);
   return 0;
 }
