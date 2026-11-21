@@ -664,18 +664,26 @@ static inline void stringsControl(StringsEngine &s) {
                   : (M.artic >= 0 ? (uint8_t)M.artic : (s.artic < ART_COUNT ? s.artic : 0));
   s.articEff = art;
   const StrArticDef &A = STR_ARTIC[art];
-  s.beta = A.beta;
-  // bow: pressure sets the friction curve (higher pressure = longer sticking,
-  // more grit)
-  const float press = strClamp(s.pressure * A.press, 0.0f, 1.0f);
+  // the PRESSURE knob is the playing zone, contact point and force together
+  // like a player uses them: left = over the fingerboard with a light bow
+  // (soft, dark), centre = the articulation's normal contact point, right =
+  // close to the bridge with more force (loud, bright). The contact point
+  // moves 2x either way from the articulation's own; the force stays inside
+  // the clean (Helmholtz) window, from its light to its firm side
+  const float zone = strClamp(s.pressure, 0.0f, 1.0f);
+  // a fast bow cannot play right at the bridge (it needs more force than a
+  // player has), so players move away from it: the closest point follows
+  // the bow speed
+  const float betaMin = 0.03f + 0.045f * strClamp(s.speed, 0.0f, 1.0f);
+  s.beta = strClamp(A.beta * exp2f(1.0f - 2.0f * zone), betaMin, 0.30f);
+  const float press = strClamp((0.35f + 0.3f * zone) * A.press, 0.0f, 1.0f);
   // the CLOCK RATE knob: bow speed on a log scale like real bow speeds,
   // ~9 cm/s (fully left) ... ~25 cm/s (centre) ... ~70 cm/s (fully right)
   s.bowBase = 0.04f * powf(8.0f, strClamp(s.speed, 0.0f, 1.0f));
   s.swellK = M.swell > 0 ? 1.0f / (M.swell * STR_SR) : 1.0f;
-  // the PRESSURE knob is relative to the playable (Helmholtz) window, which
-  // moves with the bow position like on a real instrument (Schelleng): over
-  // the fingerboard a light bow, near the bridge more force. Centre = normal
-  // tone, left = light (towards flautando), right = heavy (towards crunch)
+  // the force is relative to the playable (Helmholtz) window, which moves
+  // with the contact point and the bow speed like on a real instrument
+  // (Schelleng): over the fingerboard a light bow, near the bridge more force
   {
     const float bb = strClamp(s.beta, 0.03f, 0.30f);
     // friction slope for a normal tone (measured): grows with the bow

@@ -14,9 +14,10 @@
 //                                   twelfth down), Threnody swarm
 //   - SPREAD knob + CV ............ layout: unison, octaves, fifths, major, minor,
 //                                   divisi major, divisi minor, cluster
-//   - SAMPLE SELECT knob + CV ..... bow pressure, relative to the playable window
-//                                   (centre = normal tone at any bow position /
-//                                   speed, left = light, right = heavy); CV 1 V = 10 %
+//   - SAMPLE SELECT knob + CV ..... playing zone: contact point and force together
+//                                   (left = over the fingerboard, light, soft and
+//                                   dark; centre = normal; right = near the bridge,
+//                                   firm, loud and bright); CV 1 V = 10 %
 //   - CLOCK RATE knob ............. bow speed, log scale ~9 ... 25 ... 70 cm/s
 //   - LED CLK ..................... blinks on the detected beat
 //   - diagnose: hold TRIGGER while powering up -> divisi out = CPU load
@@ -47,7 +48,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.19.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.20.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"

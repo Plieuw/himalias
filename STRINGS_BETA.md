@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.19.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.20.0-beta.uf2`
 
 ## Concept
 
@@ -48,14 +48,14 @@ SAMPLE OUT plays normally.
 |---|---|
 | SAMPLE TUNE knob | the instrument's real range: fully left = lowest open string (violin G3, viola C3, cello C2, bass E1), fully right = top note (violin G7, viola F#6, cello C6, bass G4). Pitch CV 1 V/oct on top (0 V = the knob's note). Notes outside the range fold by octaves into it, per player (each instrument in a section stays in its own range) |
 | CLOCK RATE knob | bow speed on a log scale: ~9 cm/s (left) ... ~25 cm/s (centre) ... ~70 cm/s (right) |
-| SAMPLE SELECT knob + CV | bow force **relative to the playable window** (Schelleng): the window moves with bow position and bow speed, the knob follows it. Centre = normal tone at any bow position / speed / articulation; left = light (towards flautando / surface sound), right = heavy (towards crunch). CV 1 V = 10 % of the knob |
+| SAMPLE SELECT knob + CV | **playing zone** (v1.20): contact point and bow force together, the way players combine them. Left = over the fingerboard (contact point 2x further from the bridge than the articulation's own) with a light bow: soft and dark; centre = the articulation's normal contact point; right = 2x closer to the bridge with a firm bow: ~+6 dB louder and brighter. The force always stays inside the clean (Helmholtz) window for that contact point and bow speed; a fast bow keeps a bit away from the bridge (as players do). CV 1 V = 10 %. The overpressure model still uses it to pick crunch / octave / twelfth |
 | CV IN RATE | dynamic gate 0 ... 10 V (soft ... full); bow speed, grip and level follow it: soft -> normal ~+12 dB |
 | SQUARES MAIN TUNE knob + CV | articulation; the CV adds **1 V per articulation step** to the knob's choice (sequence articulations with a CV sequencer); before v1.19 the CV was added as a raw reading, so a patched 0 V shifted it by half the range |
 | LED CLK | blinks on the detected beat (rhythm analysis), so you can see the tempo was found; diagnose mode: on while the CPU guard has dropped players |
 
-Measured (harmonics-to-noise over the pressure knob, legato / tasto /
-ponticello, three bow speeds): the middle half of the knob is clean
-everywhere (>= 34 dB); before, ponticello could break up in the middle.
+Measured (harmonics-to-noise over the playing-zone knob, legato / tasto /
+ponticello, three bow speeds): clean over the whole knob (>= 38 dB, sustained
+tone); slow and medium bow ~+6 dB from left to right.
 
 The output gain is set so normal notes (no dynamic gate) peak ~3.4 ... 4.9 V
 over all 18 models; louder dynamic-gate notes go into the limiter.
