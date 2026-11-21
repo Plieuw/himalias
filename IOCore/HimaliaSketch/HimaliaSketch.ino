@@ -519,7 +519,7 @@ remove external excitation ISR  // SuperSQUARE Ramps generate binary pattern
 
   {
     // Six-voice bowed-string engine; mono sum goes to SAMPLE OUT.
-    float out = stringsTick(strings, strings_gate) * 2.0f;
+    float out = stringsTick(strings, strings_gate);
 
     int32_t dl = 2048 + (int32_t)(out * 2047.0f);
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
