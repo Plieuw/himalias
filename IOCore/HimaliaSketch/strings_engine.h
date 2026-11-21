@@ -47,7 +47,7 @@
 #endif
 #define STR_AIR_DEFAULT 0.5f    // air band level (0 = none)
 #ifndef STR_OUT_GAIN
-#define STR_OUT_GAIN 0.75f      // make-up gain into the output limiter (normal notes peak ~4.5 V)
+#define STR_OUT_GAIN 0.90f      // make-up gain into the output limiter (normal notes peak ~4.5 V)
 #endif
 #define STR_LIM_CEIL 0.97f      // limiter ceiling (+-4.85 V), no clipper
 #define STR_LIM_LOOK 64         // look-ahead (samples, 1.3 ms)
