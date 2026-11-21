@@ -44,10 +44,9 @@ static void seqStep(uint16_t change_adc, bool scaleB);
 // incrementer bipolar = 2/SR * f 
 
 
-#include "resonators.h"   // physical models: string, bar, bell/glass, drum, wind
-ResState          res;                     // the resonator voice
-volatile float    res_ext   = 0.0f;        // external excitation input (-1 ... 1)
-volatile bool     res_strike_pending = false;
+#include "strings_engine.h" // bowed violin/cello physical-model engine
+StringsEngine strings;
+volatile bool strings_gate = false;
 /*
 
 PA22 RandomOut    PWM Out ?
@@ -255,7 +254,7 @@ void setup() {
 
   Serial.begin(115200);
   // while ( !Serial ) delay(10);   // wait for native usb
-  Serial.println("Himalia resonator firmware " HIMALIA_FW_VERSION);
+  Serial.println("Himalia bowed strings firmware " HIMALIA_FW_VERSION);
 
   /*
   flash.begin();
@@ -305,10 +304,9 @@ void setup() {
   zt4.enable(true);
 
   seqStep(0, false);   // start the squares with a defined pattern
-  resInit(res);
-  resControl(res);
-
-  adc51.beginSyncInput(PB01, ADC_Channel13);   // CV IN RATE = sync input, sampled in the audio interrupt
+  stringsInit(strings);
+  stringsSetInstrument(strings, (PORT->Group[PORTA].IN.reg & (1ul << 20)) ? STR_VIOLIN : STR_CELLO);
+  stringsControl(strings, 220.0f, false, STR_UNISON, 0.35f, 0.45f, 0.0018f, 5.2f);
 }
 
 //
@@ -474,23 +472,7 @@ void renderAudio() {
 
   ++audio_tick;
 
-  // ---- external excitation: CV IN RATE sampled every tick (audio input)
-  if(adc51.syncRunning && ADC0->INTFLAG.bit.RESRDY){
-    static float dc = 0.0f;
-    const int32_t v = ADC0->RESULT.reg;
-    ADC0->SWTRIG.bit.START = 1;                            // next sample
-    if(v < SYNC_UNPATCHED){
-      const float x = (float)(v - SYNC_ZERO) * (1.0f / 1045.0f);   // +-5 V -> +-1
-      dc += (x - dc) * 0.0005f;                                    // remove DC / slow CV
-      res_ext = x - dc;
-      if(res_ext > 0.05f || res_ext < -0.05f) sync_seen = 0;       // LED: signal present
-    } else {
-      res_ext = 0.0f;
-    }
-  }
-  if(sync_seen < 100000) sync_seen++;
-
-  // SuperSQUARE Ramps generate binary pattern
+remove external excitation ISR  // SuperSQUARE Ramps generate binary pattern
   bool sqr_pins[6];
   bool flt_pins[6];
   for(int i = 0 ; i < 6 ; i++){
@@ -525,7 +507,6 @@ void renderAudio() {
   } else {
     PORT->Group[PORTB].OUTSET.reg = 1ul << 31;
     if(!previous_trigger){          // check for edge
-      res_strike_pending = true;   // strike the resonator
       seq_steps_pending++;  // clock the squares sequencer
     }
     previous_trigger=true;
@@ -533,19 +514,11 @@ void renderAudio() {
 
 
 
-  res.sustain = !(PORT->Group[PORTB].IN.reg & (1ul << 17));   // BIT switch (PB17): bow / blow while the gate is held
+  strings_gate = previous_trigger || !(PORT->Group[PORTB].IN.reg & (1ul << 17)); // trigger gate or BIT bow hold
 
   {
-    // Resonator output
-    const bool strike = res_strike_pending;
-    res_strike_pending = false;
-    float out = resTick(res, strike, previous_trigger, res_ext) * 0.7f;
-
-    // wavefolder after the resonator: the louder, the more it folds, so a
-    // strike starts folded and gets rounder while it dies away.
-    // gain 1 = clean, gain 13 = a full-scale wave folds 6 times per side.
-    const float g = wt_fold;
-    if(g > 1.01f) out = wtFold(out * g);
+    // Six-voice bowed-string engine; mono sum goes to SAMPLE OUT.
+    float out = stringsTick(strings, strings_gate) * 2.0f;
 
     int32_t dl = 2048 + (int32_t)(out * 2047.0f);
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
@@ -560,9 +533,6 @@ void renderAudio() {
       PORT->Group[PORTA].OUTCLR.reg = 1ul << 22;
     }
 
-    // rate LED: on while a sync signal comes in
-    if(sync_seen < 2400) PORT->Group[PORTB].OUTSET.reg = 1ul << 0;
-    else                 PORT->Group[PORTB].OUTCLR.reg = 1ul << 0;
   }
 
   // PORT->Group[PORTA].OUTCLR.reg = 1ul << 22;
@@ -588,16 +558,9 @@ static inline float cvVolts(uint16_t adc) {
 
 void loop() {
 
-  // CLOCK RATE knob = wavefolder: left = clean, right = 6 folds
-  uint16_t fold_poti = adc51.readAnalog(PB02,ADC_Channel14,false);
-  {
-    float k = (float)fold_poti * (1.0f / 4000.0f);
-    if(k > 1.0f) k = 1.0f;
-    if(k < 0.03f) k = 0.0f;                    // small dead zone: really clean
-    static float g_smooth = 1.0f;
-    g_smooth += ((1.0f + 12.0f * k) - g_smooth) * 0.1f;
-    wt_fold = g_smooth;
-  }
+  // CLOCK RATE knob -> bow speed.
+  uint16_t bow_speed_adc = adc51.readAnalog(PB02,ADC_Channel14,false);
+  float bow_speed = 0.05f + 0.90f * ((float)bow_speed_adc / 4095.0f);
 
   // -----------------------------------------------------------------
   // SAMPLE Speed
@@ -613,7 +576,7 @@ void loop() {
   float res_hz = RES_PITCH_LOW_HZ * exp2f(pitch_oct);
   if(res_hz < 20.0f)   res_hz = 20.0f;
   if(res_hz > 4000.0f) res_hz = 4000.0f;
-  res.f0 = res_hz;
+
 
   // -----------------------------------------------------------------
   // SQR Speed
@@ -675,22 +638,27 @@ void loop() {
   if(tb_target > 1.0f) tb_target = 1.0f;
   static float tb_smooth = 0.5f;
   tb_smooth += (tb_target - tb_smooth) * 0.1f;
-  res.timbre = tb_smooth;
+  // SAMPLE SELECT controls bow pressure in the string model.
 
-  // A/B button -> decay short / long
-  res.decay = bankB ? 4.0f : 1.0f;
-
-  // RATCHET knob -> model, with hysteresis
+  // A/B selects the instrument; RATCHET selects solo/ensemble voicing.
+  const uint8_t instrument = bankB ? STR_CELLO : STR_VIOLIN;
   uint16_t model_adc = adc51.readAnalog(PB07,ADC_Channel9,true);
   static uint16_t model_state = 0;
-  const int model = selectHyst(model_adc, 300, 3750, RES_MODELS - 1, model_state);
-  if(model != res.model){
+  const uint8_t mode = (uint8_t)selectHyst(model_adc, 300, 3750, 6, model_state);
+  static uint8_t previous_instrument = 255;
+  if(instrument != previous_instrument){
+    stringsSetInstrument(strings, instrument);
     __disable_irq();
-    res.model = model;
-    resClear(res);
+    stringsClear(strings);
     __enable_irq();
+    previous_instrument = instrument;
   }
-  resControl(res);
+  // mode 0 = solo; modes 1..6 = unison, octaves, fifths, major, minor, sus4.
+  const bool ensemble = mode != 0;
+  const uint8_t chord = ensemble ? (uint8_t)(mode - 1) : STR_UNISON;
+  stringsControl(strings, res_hz, ensemble, chord,
+                 bow_speed, 0.05f + 0.90f * tb_smooth,
+                 0.0018f, 5.2f);
 
   // Serial monitor (115200 baud): raw CV readings, twice per second, for calibration
   static uint32_t dbg_ms = 0;
