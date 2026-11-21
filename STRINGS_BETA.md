@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.6.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.7.0-beta.uf2`
 
 ## Concept
 
@@ -22,7 +22,7 @@ the former squares sequencer now drive the **generative divisi**.
 | CLOCK RATE knob | bow speed |
 | CV IN RATE jack | **dynamic gate** / bow CV, 0 ... 8 V (up to 10 V a bit more): the level is how hard the bow plays. Above ~0.4 V it is also a gate (plays notes, steps the divisi, gives the tempo). A slow CV here makes swells |
 | SQUARES MAIN TUNE knob + CV | articulation (11 steps, see below); the CV can sequence articulations |
-| TRIGGER in / button | gate: bow / pluck / strike; steps the divisi register; the time between gates is the tempo |
+| TRIGGER in / button | gate: bow / pluck / strike; steps the divisi register; the rhythm of the gates gives the tempo (also irregular ostinati) |
 | A/B button (sample side) | A = open, B = con sordino (mute: darker, softer, shorter ring) |
 | A/B button (squares side) | A = vibrato, B = senza vibrato |
 | BIT switch | tremolo (on the tempo) |
@@ -76,13 +76,26 @@ through the body (highpassed).
 After the bow leaves the string it rings on (per articulation, the same time
 for every note); con sordino shortens that.
 
-## Tempo
+## Tempo (rhythm analysis, also for ostinati)
 
-The time between gate starts is the tempo (must repeat within ~15%, 10 ms ...
-4 s). Vibrato then runs on the beat subdivision closest to its natural rate
-(~5.5 Hz, e.g. 6 Hz at 120 BPM eighths) and tremolo on the subdivision closest
-to ~13 strokes per second, with the strokes starting on the beat. Without a
-steady clock both run free (every player slightly different).
+Every gate start (TRIGGER or the dynamic gate on CV IN RATE) is logged with
+its time and velocity; the last 32 intervals are analysed:
+
+1. **pulse**: the largest grid all intervals are whole multiples of, so
+   irregular rhythms work (3+3+2, gallops, long-short-short, 16th ostinati);
+2. **pattern**: the shortest repeating group of intervals and accents
+   (up to 16 notes), i.e. one bar of the ostinato;
+3. **beat**: with a dynamic gate, regular accents mark the grid and the beat
+   is its division nearest 120 BPM; otherwise the division of the pattern
+   nearest 120 BPM. Half / double tempo is possible and harmless (vibrato and
+   tremolo pick subdivisions anyway).
+
+A change of tempo is picked up after two notes off the grid; a jump of the
+beat needs a second confirmation; after 4 s without gates the clock stops.
+Vibrato runs on the subdivision closest to its natural rate (~5.5 Hz) and
+tremolo on the one closest to ~13 strokes per second, strokes starting on
+every note. Without a clock both run free. Serial monitor shows bpm and the
+pattern (notes / pulses).
 
 ## Models (RATCHET knob, left to right)
 

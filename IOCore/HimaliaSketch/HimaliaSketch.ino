@@ -668,6 +668,7 @@ void loop() {
     Serial.print("  press ");   Serial.print(strings.pressure, 2);
     Serial.print("  artic ");   Serial.print(strings.artic);
     Serial.print("  bpm ");     Serial.print(strings.clockPeriod ? 60.0f * samplerate / (float)strings.clockPeriod : 0.0f, 1);
+    Serial.print("  pattern "); Serial.print(strings.patLen); Serial.print(" notes / "); Serial.print(strings.patPulses); Serial.print(" pulses");
     Serial.print("  divisi ");  Serial.print(strings.divisiMask, BIN);
     // worst audio interrupt in the last half second, as % of the time per sample
     const uint32_t mx = isr_cycles_max;

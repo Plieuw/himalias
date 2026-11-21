@@ -179,8 +179,31 @@ int main() {
     }
   }
 
+  // rhythm: a 3+3+2 ostinato at 140 bpm, then a tempo change to 90 bpm
+  {
+    stringsInit(s);
+    s.instrument = MDL_SOLO_VIOLIN; stringsControl(s);
+    const float e140 = 60.0f / 140.0f / 2.0f, q90 = 60.0f / 90.0f;
+    const float pat[3] = { 3 * e140, 3 * e140, 2 * e140 };
+    unsigned n = 0, gateEnd = 0; double next = 0; int k = 0;
+    float bpmA = 0; int patA = 0;
+    while (n < (unsigned)(18.0f * STR_SR)) {
+      const bool second = n > (unsigned)(9.0f * STR_SR);
+      if (n >= (unsigned)(next * STR_SR)) {
+        const float iv = second ? q90 : pat[k % 3];
+        gateEnd = n + (unsigned)(0.5f * iv * STR_SR); next += iv; ++k;
+      }
+      if ((n & 127) == 0) stringsControl(s);
+      if (n == (unsigned)(9.0f * STR_SR)) { bpmA = 60.0f * STR_SR / (float)(s.clockPeriod ? s.clockPeriod : 1); patA = s.patLen; }
+      stringsTick(s, n < gateEnd); ++n;
+    }
+    const float bpmB = 60.0f * STR_SR / (float)(s.clockPeriod ? s.clockPeriod : 1);
+    if (std::fabs(bpmA - 140.0f) > 2.0f || patA != 3) { std::printf("FAIL ostinato tempo %.1f bpm, pattern %d notes\n", bpmA, patA); ++fails; }
+    if (std::fabs(bpmB - 90.0f) > 1.5f && std::fabs(bpmB - 180.0f) > 3.0f) { std::printf("FAIL tempo change %.1f bpm\n", bpmB); ++fails; }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, tempo sync, divisi output, velocity)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, tempo sync, divisi output, velocity, ostinato tempo)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

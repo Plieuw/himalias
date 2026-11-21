@@ -28,6 +28,7 @@
 #define STR_SR 47619.0f
 #endif
 
+#define STR_ONSETS 33       // gate starts kept for the rhythm analysis (32 intervals)
 #define STR_VOICES     6
 #define STR_NECK_LEN   2048          // nut side segment (lowest note ~ 23 Hz)
 #define STR_BRIDGE_LEN 512           // bridge side segment (bow position <= 0.3)
@@ -213,8 +214,19 @@ struct StringsEngine {
   float velocity;                 // dynamic gate level (1 = normal), sampled per note
   // tempo from the gates: vibrato and tremolo lock to it
   uint32_t sinceGate;             // samples since the last gate start
-  uint32_t clockPeriod;           // samples per gate (0 = no steady clock)
-  uint32_t lastPeriod;
+  uint32_t clockPeriod;           // samples per beat (0 = no clock)
+  // rhythm analysis: the last gate starts (time, velocity) -> pulse, pattern, beat
+  uint32_t now;                   // sample counter
+  uint32_t onT[STR_ONSETS];       // gate start times (ring)
+  float    onV[STR_ONSETS];       // gate start velocities (accents)
+  uint8_t  onW;                   // next write position
+  uint8_t  onN;                   // valid onsets (0 ... STR_ONSETS)
+  uint16_t onCount;               // counts every onset (the analysis runs on news)
+  uint16_t onSeen;
+  uint32_t pulse;                 // smallest grid in the rhythm (samples)
+  uint8_t  patLen;                // pattern length in notes (0 = none found)
+  uint8_t  patPulses;             // pattern length in pulses (one bar of the ostinato)
+  uint32_t beatCand;              // a new beat waits for a second opinion
   float vibHz, tremHz;            // current vibrato rate, tremolo cycle rate
   float dcx, dcy, level;
   uint8_t famUsed;                // bodies with players
@@ -344,7 +356,9 @@ static inline void stringsInit(StringsEngine &s) {
   s.bowNoise = 0.0f;
   s.transient = 1.0f;
   s.velocity = 1.0f;
-  s.sinceGate = 0; s.clockPeriod = 0; s.lastPeriod = 0; s.vibHz = 0; s.tremHz = 6.5f;
+  s.sinceGate = (uint32_t)(5.0f * STR_SR); s.clockPeriod = 0;   // the first gate counts too
+  s.now = 0; s.onW = 0; s.onN = 0; s.onCount = 0; s.onSeen = 0;
+  s.pulse = 0; s.patLen = 0; s.patPulses = 0; s.beatCand = 0; s.vibHz = 0; s.tremHz = 6.5f;
   s.instrument = MDL_SOLO_VIOLIN; s.layout = LAY_UNISON; s.maxVoices = STR_VOICES;
   s.trillPh = 0; s.trillInc = 9.0f / STR_SR;
   s.model = STR_MODELS[0]; s.articEff = ART_LEGATO;
@@ -363,7 +377,136 @@ static inline float strLpDelay(float k, float f) {
 }
 
 // ------------------------------------------------------------------ control (loop)
+// ------------------------------------------------------------------ rhythm analysis (loop)
+// Works on irregular rhythms (ostinati like 3+3+2, long-short-short, gallops):
+//  1. pulse: the largest grid that all intervals are whole multiples of
+//  2. pattern: the shortest repeating group of intervals (and accents)
+//  3. beat: the accent spacing when the accents are regular, otherwise the
+//     division of the pattern nearest 120 bpm (or a pulse multiple)
+static inline void stringsTempo(StringsEngine &s) {
+  if (s.onCount == s.onSeen) return;
+  s.onSeen = s.onCount;
+  int n = s.onN;
+  if (n < 3) return;                                       // 2 intervals needed
+  // tempo change: when the newest two intervals are off the current grid,
+  // forget the older notes and start over from the new ones
+  if (s.pulse && n > 3) {
+    int off = 0;
+    for (int b = 1; b <= 2; b++) {
+      const int i1 = (s.onW + STR_ONSETS - b) % STR_ONSETS, i0 = (i1 + STR_ONSETS - 1) % STR_ONSETS;
+      const float m = (float)(s.onT[i1] - s.onT[i0]) / (float)s.pulse;
+      const float r = floorf(m + 0.5f);
+      if (r < 1.0f || r > 12.0f || fabsf(m - r) > 0.1f) off++;
+    }
+    if (off == 2) { n = 3; s.onN = 3; }
+  }
+  int ni = n - 1;
+  uint32_t ioi[STR_ONSETS - 1];
+  float vel[STR_ONSETS];
+  const int start = (s.onW + STR_ONSETS - n) % STR_ONSETS;
+  for (int i = 0; i < n; i++) vel[i] = s.onV[(start + i) % STR_ONSETS];
+  for (int i = 0; i < ni; i++)
+    ioi[i] = s.onT[(start + i + 1) % STR_ONSETS] - s.onT[(start + i) % STR_ONSETS];
+
+  // 1. pulse: candidates are every interval / 1 ... 4; keep the largest that
+  //    fits (nearly) all intervals as 1 ... 12 pulses
+  const float minP = 0.055f * STR_SR, maxP = 2.0f * STR_SR;
+  float best = 0.0f;
+  for (int i = 0; i < ni; i++) {
+    for (int k = 1; k <= 4; k++) {
+      const float P = (float)ioi[i] / (float)k;
+      if (P < minP || P > maxP || P <= best * 1.03f) continue;
+      int fit = 0;
+      for (int j = 0; j < ni; j++) {
+        const float m = (float)ioi[j] / P;
+        const float r = floorf(m + 0.5f);
+        if (r >= 1.0f && r <= 12.0f && fabsf(m - r) < 0.09f * (r < 3.0f ? 1.0f : 3.0f / r) + 0.03f) fit++;
+      }
+      if (fit * 10 >= ni * 9) best = P;                    // 90 % of the intervals fit
+    }
+  }
+  if (best <= 0.0f) return;                                // no grid (free playing): keep the old tempo
+  // refine: least squares over the fitting intervals
+  uint8_t u[STR_ONSETS - 1];
+  {
+    float sumI = 0, sumM = 0;
+    for (int j = 0; j < ni; j++) {
+      float r = floorf((float)ioi[j] / best + 0.5f);
+      if (r < 1.0f) r = 1.0f;
+      if (r > 12.0f) r = 12.0f;
+      u[j] = (uint8_t)r;
+      sumI += (float)ioi[j]; sumM += r;
+    }
+    best = sumI / sumM;
+  }
+  s.pulse = (uint32_t)best;
+
+  // accents: only when the dynamic gate really varies
+  float vmax = 0, vmin = 10, vsum = 0;
+  for (int i = 0; i < n; i++) { vmax = fmaxf(vmax, vel[i]); vmin = fminf(vmin, vel[i]); vsum += vel[i]; }
+  const bool accents = (vmax - vmin) > 0.15f;
+  const float vThr = vmin + 0.6f * (vmax - vmin);
+  bool acc[STR_ONSETS];
+  for (int i = 0; i < n; i++) acc[i] = accents && vel[i] >= vThr;
+
+  // 2. pattern: shortest L (notes) where intervals (and accents) repeat
+  int L = 0;
+  for (int l = 1; l <= 16 && l * 2 <= ni; l++) {
+    bool ok = true;
+    for (int j = l; j < ni && ok; j++) if (u[j] != u[j - l] || acc[j] != acc[j - l]) ok = false;
+    if (ok) { L = l; break; }
+  }
+  int bar = 0;                                             // pattern length in pulses
+  if (L) for (int j = ni - L; j < ni; j++) bar += u[j];
+  s.patLen = (uint8_t)L; s.patPulses = (uint8_t)(bar > 255 ? 255 : bar);
+
+  // 3. beat in pulses
+  int beat = 0;
+  if (accents) {                                           // regular accents = the beat
+    int last = -1, sp = 0, pos = 0; bool regular = true; int cnt = 0;
+    for (int i = 0; i < n; i++) {
+      if (acc[i]) {
+        if (last >= 0) { const int d = pos - last; if (sp && d != sp) regular = false; sp = d; cnt++; }
+        last = pos;
+      }
+      if (i < ni) pos += u[i];
+    }
+    if (regular && cnt >= 2 && sp > 0) {
+      // the accents mark the grid; the beat is the division of it nearest 120 bpm
+      float d = 1e9f;
+      for (int b = 1; b <= sp; b++) {
+        if (sp % b) continue;
+        const float e = fabsf(logf(b * best / (0.5f * STR_SR)));
+        if (e < d) { d = e; beat = b; }
+      }
+    }
+  }
+  if (!beat) {
+    // divisions of the pattern (or 1, 2, 4, 8 pulses) nearest 0.5 s
+    float d = 1e9f;
+    const int span = bar ? bar : 8;
+    for (int b = 1; b <= span; b++) {
+      if (bar ? (bar % b) != 0 : (b & (b - 1)) != 0) continue;
+      const float e = fabsf(logf(b * best / (0.5f * STR_SR)));
+      if (e < d) { d = e; beat = b; }
+    }
+  }
+  const uint32_t newBeat = (uint32_t)(beat * best);
+  // follow small changes smoothly, take a jump only when it is confirmed
+  const uint32_t old = s.clockPeriod;
+  const float ratio = old ? (float)newBeat / (float)old : 0.0f;
+  if (!old || (ratio > 0.9f && ratio < 1.1f)) {
+    s.clockPeriod = old ? (old * 3 + newBeat) / 4 : newBeat;
+    s.beatCand = 0;
+  } else if (s.beatCand && fabsf((float)newBeat / (float)s.beatCand - 1.0f) < 0.1f) {
+    s.clockPeriod = newBeat; s.beatCand = 0;
+  } else {
+    s.beatCand = newBeat;
+  }
+}
+
 static inline void stringsControl(StringsEngine &s) {
+  stringsTempo(s);
   const StrModelDef &M = STR_MODELS[s.instrument < MDL_COUNT ? s.instrument : 0];
   const uint8_t ins = M.ins;
   const uint8_t lay = M.layout >= 0 ? (uint8_t)M.layout : (s.layout < LAY_COUNT ? s.layout : 0);
@@ -516,22 +659,27 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     trillUp = s.trillPh >= 0.5f;
   }
   const float trillRatio = M.trill == 2 ? 0.8908987f : (M.trill == 1 ? 0.9438743f : 1.0f);
-  // ---- tempo: time between gate starts (10 ms ... 4 s), must repeat
+  // ---- tempo: log every gate start (time + velocity); stringsTempo() finds
+  //      the pulse, the ostinato pattern and the beat from it
+  s.now++;
   if (s.sinceGate < 0xFFFFFFF0u) s.sinceGate++;
-  if (gate && !s.gatePrev) {
-    const uint32_t per = s.sinceGate;
+  if (gate && !s.gatePrev && s.sinceGate > (uint32_t)(0.03f * STR_SR)) {   // ignore bounces < 30 ms
+    if (s.sinceGate > (uint32_t)(3.0f * STR_SR)) s.onN = 0;               // long pause: new rhythm
     s.sinceGate = 0;
-    if (per > (uint32_t)(0.01f * STR_SR) && per < (uint32_t)(4.0f * STR_SR)) {
-      const float r = (float)per / (float)(s.lastPeriod ? s.lastPeriod : 1);
-      if (r > 0.85f && r < 1.18f)                            // steady: follow it smoothly
-        s.clockPeriod = s.clockPeriod ? (s.clockPeriod * 3 + per) / 4 : per;
-      s.lastPeriod = per;
-    }
+    s.onT[s.onW] = s.now; s.onV[s.onW] = s.velocity;
+    s.onW = (uint8_t)((s.onW + 1) % STR_ONSETS);
+    if (s.onN < STR_ONSETS) s.onN++;
+    s.onCount++;
     // tremolo strokes start on the beat (tiny per-player spread)
     for (int i = 0; i < STR_VOICES; i++)
       s.v[i].tremPh = 0.25f + 0.01f * (float)i;
   }
-  if (s.sinceGate > (uint32_t)(4.0f * STR_SR)) s.clockPeriod = 0;   // clock stopped
+  // the dynamic gate may still be rising at the edge: keep the peak of the first 10 ms
+  if (s.sinceGate < (uint32_t)(0.01f * STR_SR) && s.onN) {
+    const uint8_t last = (uint8_t)((s.onW + STR_ONSETS - 1) % STR_ONSETS);
+    if (s.velocity > s.onV[last]) s.onV[last] = s.velocity;
+  }
+  if (s.sinceGate > (uint32_t)(4.0f * STR_SR)) { s.clockPeriod = 0; s.pulse = 0; s.patLen = 0; }   // clock stopped
 
   if (gate != s.gatePrev) {
     for (int i = 0; i < STR_VOICES; i++) {
