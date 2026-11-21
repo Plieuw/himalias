@@ -87,6 +87,33 @@ int main() {
     if (std::fabs(c) > 10.0) { std::printf("FAIL intonation %.1f Hz: %+.1f cents\n", s.rootHz, c); ++fails; }
   }
 
+  // legato finger travel is continuous and supports fractional pitch CV for
+  // both a solo instrument and an ensemble player (no fret/semitone snapping).
+  for (int model = 0; model < 2; ++model) {
+    stringsInit(s);
+    s.instrument = model == 0 ? MDL_SOLO_VIOLIN : MDL_VIOLIN_SECTION;
+    s.artic = ART_LEGATO;
+    s.rootHz = 440.0f; s.speed = 0.6f; s.pressure = 0.6f;
+    stringsControl(s);
+    if (!render(true, 30000, x)) { ++fails; continue; }
+    const float fractionalHz = 440.0f * std::exp2(5.37f / 12.0f);
+    s.rootHz = fractionalHz;
+    stringsControl(s);
+    const float before = s.v[0].len;
+    const float target = s.v[0].lenTarget;
+    if (model == 0 && std::fabs(s.v[0].hz - fractionalHz) > 0.02f) {
+      std::printf("FAIL fractional pitch CV was quantized: %.3f vs %.3f\\n", s.v[0].hz, fractionalHz); ++fails;
+    }
+    stringsTick(s, true);
+    if (std::fabs(s.v[0].len - target) >= std::fabs(before - target) ||
+        std::fabs(s.v[0].len - target) < 0.005f * std::fabs(before - target)) {
+      std::printf("FAIL model %d legato slide snapped or moved in wrong direction\\n", model); ++fails;
+    }
+    if (!render(true, 40000, x) || std::fabs(s.v[0].len - target) > 0.01f) {
+      std::printf("FAIL model %d legato slide did not settle smoothly\\n", model); ++fails;
+    }
+  }
+
   // pizzicato: plucked, then dies away
   stringsInit(s);
   s.instrument = MDL_SOLO_VIOLIN; s.rootHz = 392.0f; s.pizz = true;
