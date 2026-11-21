@@ -19,6 +19,7 @@ Himalia's mono SAMPLE OUT is now driven by a CV-controlled bowed-string engine. 
 | CLOCK RATE knob | Bow speed |
 | TRIGGER input / manual trigger | Note gate |
 | BIT switch | Holds the bow gate open |
+| CV IN RATE jack | Unassigned in this strings beta |
 | SAMPLE OUT | Mono sum of the active string voices |
 
 The six square outputs and their generative sequencer are retained as auxiliary functions. The CV-driven bowed-string voice itself is monophonic at its input; chord layouts are generated from its one root pitch.
