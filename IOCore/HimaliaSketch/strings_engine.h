@@ -118,6 +118,22 @@ static const StrModelDef STR_MODELS[MDL_COUNT] = {
   { INS_VIOLIN_SECTION, ART_TASTO,     LAY_OCTAVES,  -1, 0.7f, 0.75f, 2.2f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // shimmer
 };
 
+// noise transient per articulation: bow scratch at the start of a stroke,
+// finger snap (pizzicato), wood click (col legno)
+static const float STR_ARTIC_SCRATCH[ART_COUNT] = {
+  0.35f,   // legato
+  0.65f,   // detache
+  1.00f,   // martele
+  0.80f,   // staccato
+  0.90f,   // spiccato
+  0.25f,   // sul tasto
+  0.75f,   // sul ponticello
+  1.20f,   // col legno
+  0.30f,   // flageolet
+  0.80f,   // pizzicato
+  0.35f,   // portamento
+};
+
 // lowest open string per family (Hz): notes below are played an octave up
 static const float STR_FAMILY_LOW[STR_FAMILIES] = { 196.0f, 130.8f, 65.4f, 41.2f };
 
@@ -145,6 +161,9 @@ struct StrVoice {
   float dir;                      // bow direction +1 / -1
   float accent;                   // stroke accent (decays)
   float swell;                    // note swell (0 ... 1)
+  float tran;                     // noise transient envelope
+  float tranHp;                   // highpass state for the radiated transient
+  float tremPrev;                 // previous tremolo stroke sign
   uint32_t nrng;                  // own noise generator (bow / rosin noise)
   float ringLoss;                 // string loss per round trip once the bow is off
   float hz;                       // this player's note (for the square outputs)
@@ -188,6 +207,7 @@ struct StringsEngine {
   float famLp[STR_FAMILIES];       // output lowpass per family (top end roll-off)
   float famLpK[STR_FAMILIES];
   float bowNoise;                 // rosin noise amount
+  float transient;                // noise transient amount (1 = normal)
   // tempo from the gates: vibrato and tremolo lock to it
   uint32_t sinceGate;             // samples since the last gate start
   uint32_t clockPeriod;           // samples per gate (0 = no steady clock)
@@ -307,6 +327,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.gain = 1.0f;
     v.onset = 0; v.pluckN = v.pluckLen = 0; v.pluckAmp = 0.5f;
     v.strokeN = 0; v.dir = 1.0f; v.accent = 0.0f; v.swell = 1.0f;
+    v.tran = 0.0f; v.tranHp = 0.0f; v.tremPrev = 1.0f;
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
     v.ringLoss = 0.99f;
     v.hz = 220.0f;
@@ -318,6 +339,7 @@ static inline void stringsInit(StringsEngine &s) {
   for (int f = 0; f < STR_FAMILIES; f++) { s.famLp[f] = 0; s.famLpLead[f] = 0; s.famLpK[f] = 0.5f; }
   s.outDivisi = 0; s.dc2x = s.dc2y = 0;
   s.bowNoise = 0.0f;
+  s.transient = 1.0f;
   s.sinceGate = 0; s.clockPeriod = 0; s.lastPeriod = 0; s.vibHz = 0; s.tremHz = 6.5f;
   s.instrument = MDL_SOLO_VIOLIN; s.layout = LAY_UNISON; s.maxVoices = STR_VOICES;
   s.trillPh = 0; s.trillInc = 9.0f / STR_SR;
@@ -531,12 +553,17 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     if (v.onset) v.onset--;
     else if (v.gate != gate) {
       v.gate = gate;
+      if (!gate && v.env > 0.1f && A.mode == MODE_BOW) v.tran += 0.12f;   // bow lifts off
       if (gate) {
         const bool continuing = A.legato && v.env > 0.05f;    // legato: same bow
+        if (continuing) v.tran += 0.15f;                      // finger / bow change noise
         if (!continuing) {
           v.strokeN = 0;
           v.accent = A.accent * M.accent;
           v.swell = M.swell > 0 ? 0.15f : 1.0f;               // swell: start soft
+          // noise transient: scratch / snap / click, a bit different every time
+          v.tran = STR_ARTIC_SCRATCH[s.articEff < ART_COUNT ? s.articEff : 0]
+                 * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) * (0.6f + 0.6f * s.pressure);
           if (A.alternate) v.dir = -v.dir;                    // up-bow / down-bow
           if (A.glide > 0.0005f || v.env < 0.05f) v.len = v.lenTarget;   // new note: no slide
           v.vibAmt = 0;                                       // vibrato starts later
@@ -600,6 +627,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         float tri = 4.0f * (v.tremPh < 0.5f ? v.tremPh : 1.0f - v.tremPh) - 1.0f;
         tri *= 3.0f;
         tri = strClamp(tri, -1.0f, 1.0f);
+        const float sg = tri >= 0 ? 1.0f : -1.0f;
+        if (sg != v.tremPrev) { v.tran += 0.35f; v.tremPrev = sg; }   // bow change scratch
         bv *= tri;
       }
       // rosin noise on the bow
@@ -625,13 +654,26 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       } else v.pluck = false;
     }
 
+    // noise transient: ~12 ms, part goes into the string, part is heard directly
+    float tr = 0.0f;
+    if (v.tran > 0.002f) {
+      v.nrng = v.nrng * 1664525u + 1013904223u;
+      const float nz = (float)(int32_t)v.nrng * (1.0f / 2147483648.0f);
+      tr = nz * v.tran * s.transient;
+      v.tran *= (A.mode == MODE_STRIKE) ? 0.990f : 0.9982f;  // wood click shorter
+      newVel += tr * 0.04f;
+    }
     v.neck[v.nw]   = bridgeRefl + newVel;
     v.bridge[v.bw] = nutRefl + newVel;
     v.nw = (v.nw + 1) & (STR_NECK_LEN - 1);
     v.bw = (v.bw + 1) & (STR_BRIDGE_LEN - 1);
 
-    if (i == 0) leadBus = bridgeOut * v.gain;               // force on the bridge
-    else        famBus[v.family] += bridgeOut * v.gain;
+    // radiated transient: highpassed so it is a scratch, not a thump
+    const float trHp = tr - v.tranHp;
+    v.tranHp += (tr - v.tranHp) * 0.15f;
+    const float radiated = bridgeOut + trHp * 0.10f;
+    if (i == 0) leadBus = radiated * v.gain;                 // force on the bridge
+    else        famBus[v.family] += radiated * v.gain;
   }
 
   // ---- bodies: player 1 through its own body, the divisi players through

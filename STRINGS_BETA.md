@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.4.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.5.0-beta.uf2`
 
 ## Concept
 
@@ -55,6 +55,13 @@ loud accents are softly limited.
 | 9 | flageolet | natural harmonic: an octave higher, light, pure |
 | 10 | pizzicato | plucked |
 | 11 | portamento | expressive slide (~0.2 s) on every pitch change |
+
+Noise transients (v1.5): every stroke starts with a short bow scratch
+(~12 ms, more for martele / spiccato / ponticello, little for legato and
+tasto), legato note changes and tremolo bow changes add a small scratch,
+the bow lifting off gives a puff, pizzicato a finger snap and col legno a
+wood click. Part of the noise drives the string, part is heard directly
+through the body (highpassed).
 
 After the bow leaves the string it rings on (per articulation, the same time
 for every note); con sordino shortens that.
