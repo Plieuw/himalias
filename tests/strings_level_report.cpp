@@ -1,6 +1,6 @@
 // Relative loudness and peak report for all Himalia Strings models.
 // Host-side measurement only; no firmware behavior is changed.
-#define STR_OUT_GAIN 0.6f
+#define STR_OUT_GAIN 0.60f
 #include "../IOCore/HimaliaSketch/strings_engine.h"
 #include <cmath>
 #include <cstdio>
@@ -55,6 +55,10 @@ int main() {
       model == 12 ? "suspense" : model == 13 ? "heroic" :
       model == 14 ? "emotional_swell" : model == 15 ? "shimmer" :
       model == 16 ? "overpressure" : "threnody";
+    if (peak > 0.995) {
+      std::fprintf(stderr, "FAIL model=%02d peak=%.6f exceeds calibrated headroom\\n", model, peak);
+      return 1;
+    }
     std::printf("LEVEL model=%02d name=%s rms=%.6f peak=%.6f\\n",
       model, name, total / 3.0, peak);
   }

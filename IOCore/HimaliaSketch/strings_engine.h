@@ -47,10 +47,8 @@
 #endif
 #define STR_AIR_DEFAULT 0.5f    // air band level (0 = none)
 #ifndef STR_OUT_GAIN
-#define STR_OUT_GAIN 0.90f      // make-up gain into the output limiter (normal notes peak ~4.5 V)
+#define STR_OUT_GAIN 0.60f      // calibrated for a 4.95 V peak target at the +/-5 V DAC scale
 #endif
-#define STR_LIM_CEIL 0.97f      // limiter ceiling (+-4.85 V), no clipper
-#define STR_LIM_LOOK 64         // look-ahead (samples, 1.3 ms)
 #define STR_SYM_STRINGS 5       // sympathetic resonance: up to 5 open strings (5-string bass)
 #define STR_SYM_LEN 1600        // delay per open string (bass B0 ~ 1540 samples)
 #ifndef STR_SYM_LEVEL
@@ -129,25 +127,25 @@ struct StrModelDef {
 };
 static const StrModelDef STR_MODELS[MDL_COUNT] = {
   //  base                art            layout        trem vibD  vibR  swell trill accent tight ring gain
-  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // solo violin
-  { INS_SOLO_VIOLA,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // solo viola
-  { INS_SOLO_CELLO,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // solo cello
-  { INS_VIOLIN_SECTION, -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // violin section
-  { INS_VIOLA_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // viola section
-  { INS_CELLO_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // cello section
-  { INS_FULL_STRINGS,   -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // full strings
-  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.9f, 1.15f, 0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // molto vibrato violin
-  { INS_SOLO_CELLO,     ART_LEGATO,    -1,           -1, 1.7f, 0.8f,  0.6f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // romantic cello
-  { INS_VIOLIN_SECTION, ART_DETACHE,   -1,            1, 0.5f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.6f, 0.0f, 0.0f },  // tremolo section
-  { INS_VIOLIN_SECTION, ART_LEGATO,    -1,           -1, 0.3f, 1.0f,  0.0f, 2,   1.0f,  0.5f, 1.0f, 1.0f, 0.0f, 0.0f },  // trill section (whole tone)
-  { INS_LOW_STRINGS,    ART_SPICCATO,  LAY_OCTAVES,   0, 0.0f, 1.0f,  0.0f, 0,   3.5f,  0.2f, 0.25f, 2.4f, 0.0f, 0.0f },  // epic ostinato
-  { INS_VIOLIN_SECTION, ART_PONTICELLO,LAY_CLUSTER,   1, 0.2f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.25f, 0.0f, 0.0f },  // suspense
-  { INS_FULL_STRINGS,   ART_MARTELE,   LAY_OCTAVES,  -1, 1.6f, 1.1f,  0.0f, 0,   1.4f,  0.6f, 1.0f, 1.0f, 0.0f, 0.0f },  // heroic theme
-  { INS_FULL_STRINGS,   ART_LEGATO,    -1,           -1, 1.4f, 0.95f, 1.6f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // emotional swell
-  { INS_VIOLIN_SECTION, ART_TASTO,     LAY_OCTAVES,  -1, 0.7f, 0.75f, 2.2f, 0,   1.0f,  1.0f, 1.0f, 2.4f, 0.0f, 0.0f },  // shimmer
+  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.578f, 0.0f, 0.0f },  // solo violin
+  { INS_SOLO_VIOLA,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.792f, 0.0f, 0.0f },  // solo viola
+  { INS_SOLO_CELLO,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.798f, 0.0f, 0.0f },  // solo cello
+  { INS_VIOLIN_SECTION, -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.807f, 0.0f, 0.0f },  // violin section
+  { INS_VIOLA_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.010f, 0.0f, 0.0f },  // viola section
+  { INS_CELLO_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.896f, 0.0f, 0.0f },  // cello section
+  { INS_FULL_STRINGS,   -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.143f, 0.0f, 0.0f },  // full strings
+  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.9f, 1.15f, 0.0f, 0,   1.0f,  1.0f, 1.0f, 0.581f, 0.0f, 0.0f },  // molto vibrato violin
+  { INS_SOLO_CELLO,     ART_LEGATO,    -1,           -1, 1.7f, 0.8f,  0.6f, 0,   1.0f,  1.0f, 1.0f, 0.985f, 0.0f, 0.0f },  // romantic cello
+  { INS_VIOLIN_SECTION, ART_DETACHE,   -1,            1, 0.5f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.158f, 0.0f, 0.0f },  // tremolo section
+  { INS_VIOLIN_SECTION, ART_LEGATO,    -1,           -1, 0.3f, 1.0f,  0.0f, 2,   1.0f,  0.5f, 1.0f, 1.006f, 0.0f, 0.0f },  // trill section (whole tone)
+  { INS_LOW_STRINGS,    ART_SPICCATO,  LAY_OCTAVES,   0, 0.0f, 1.0f,  0.0f, 0,   3.5f,  0.2f, 0.25f, 1.773f, 0.0f, 0.0f },  // epic ostinato
+  { INS_VIOLIN_SECTION, ART_PONTICELLO,LAY_CLUSTER,   1, 0.2f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.162f, 0.0f, 0.0f },  // suspense
+  { INS_FULL_STRINGS,   ART_MARTELE,   LAY_OCTAVES,  -1, 1.6f, 1.1f,  0.0f, 0,   1.4f,  0.6f, 1.0f, 0.856f, 0.0f, 0.0f },  // heroic theme
+  { INS_FULL_STRINGS,   ART_LEGATO,    -1,           -1, 1.4f, 0.95f, 1.6f, 0,   1.0f,  1.0f, 1.0f, 1.704f, 0.0f, 0.0f },  // emotional swell
+  { INS_VIOLIN_SECTION, ART_TASTO,     LAY_OCTAVES,  -1, 0.7f, 0.75f, 2.2f, 0,   1.0f,  1.0f, 1.0f, 1.862f, 0.0f, 0.0f },  // shimmer
   // experimental
-  { INS_SOLO_CELLO,     -1,            -1,           -1, 0.3f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 1.0f, 0.0f },  // overpressure (ALF)
-  { INS_VIOLIN_SECTION, -1,            LAY_UNISON,   -1, 0.25f,1.0f,  1.0f, 0,   1.0f,  1.2f, 1.0f, 1.0f, 0.0f, 2.0f },  // Threnody swarm
+  { INS_SOLO_CELLO,     -1,            -1,           -1, 0.3f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.010f, 1.0f, 0.0f },  // overpressure (ALF)
+  { INS_VIOLIN_SECTION, -1,            LAY_UNISON,   -1, 0.25f,1.0f,  1.0f, 0,   1.0f,  1.2f, 1.0f, 1.079f, 0.0f, 2.0f },  // Threnody swarm
 };
 
 // noise transient per articulation: bow scratch at the start of a stroke,
@@ -276,8 +274,6 @@ struct StringsEngine {
   float famLpLead[STR_FAMILIES];
   float outDivisi;                // last sample of the divisi-only output
   float dc2x, dc2y;
-  // output limiters (main, divisi): look-ahead, no clipping
-  struct Lim { float d[STR_LIM_LOOK]; float pk, g; uint8_t w; } lim[2];
   float bodyDirect[STR_FAMILIES];
   StrAir airF;
   StrSym sym[2];                  // sympathetic strings: player 1, divisi
@@ -477,7 +473,6 @@ static inline void stringsInit(StringsEngine &s) {
   s.pizz = false; s.vibrato = true; s.tremolo = false; s.mute = false; s.artic = ART_LEGATO;
   for (int f = 0; f < STR_FAMILIES; f++) { s.famLp[f] = 0; s.famLpLead[f] = 0; s.famLpK[f] = 0.5f; }
   s.outDivisi = 0; s.dc2x = s.dc2y = 0;
-  for (int k = 0; k < 2; k++) { for (int n = 0; n < STR_LIM_LOOK; n++) s.lim[k].d[n] = 0.0f; s.lim[k].pk = 0.0f; s.lim[k].g = 1.0f; s.lim[k].w = 0; }
   s.bowNoise = 0.0f;
   s.transient = 1.0f;
   s.air = STR_AIR_DEFAULT;
@@ -890,21 +885,6 @@ static inline float strSymTick(StrSym &y, float x) {
   return out * y.out;
 }
 
-// output limiter: make-up gain brings the level up, a look-ahead limiter
-// keeps the peaks under the ceiling without touching the waveform: it sees a
-// peak 1.3 ms early and turns the gain down smoothly before it arrives
-// (release ~80 ms). No clipper anywhere.
-template <typename L> static inline float strLimit(L &l, float x) {
-  const float a = x < 0 ? -x : x;
-  l.pk = a > l.pk ? a : l.pk * 0.99974f;
-  const float gt = l.pk > STR_LIM_CEIL ? STR_LIM_CEIL / l.pk : 1.0f;
-  l.g += (gt - l.g) * (gt < l.g ? 0.075f : 0.0005f);
-  const float y = l.d[l.w];
-  l.d[l.w] = x;
-  l.w = (uint8_t)((l.w + 1) % STR_LIM_LOOK);
-  return y * l.g;
-}
-
 static inline float strAirHp(StrAir &a, int ch, float x) {
   for (int st = 0; st < 2; st++) {
     float *z = a.z[ch][st];
@@ -1283,16 +1263,17 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   lead *= s.level;
   div  *= s.level;
 
-  // divisi-only output (second DAC): dc blocker, limiter, soft clip
+  // divisi-only output (second DAC): DC blocking and fixed output calibration.
+  // No limiter or automatic gain control: bow dynamics and transients pass through.
   s.dc2y = div - s.dc2x + 0.9995f * s.dc2y;
   s.dc2x = div;
-  s.outDivisi = strLimit(s.lim[1], s.dc2y * STR_OUT_GAIN);
+  s.outDivisi = s.dc2y * STR_OUT_GAIN;
 
   // full mix (SAMPLE OUT)
   const float out = lead + div;
   s.dcy = out - s.dcx + 0.9995f * s.dcy;
   s.dcx = out;
-  return strLimit(s.lim[0], s.dcy * STR_OUT_GAIN);          // max ~+-0.97 = +-4.85 V
+  return s.dcy * STR_OUT_GAIN;
 }
 
 // clear all string and body states (instrument change)
