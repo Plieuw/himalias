@@ -1000,7 +1000,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
                  * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) * (0.6f + 0.6f * s.pressure)
                  * (0.3f + 0.7f * v.vel);
           if (A.alternate) v.dir = -v.dir;                    // up-bow / down-bow
-          if (A.glide > 0.0005f || v.env < 0.05f) v.len = v.lenTarget;   // new note: no slide
+          // A legato finger change keeps the current string length and slides to the new pitch.
+          // Detached/retriggered notes start directly at their target pitch.
+          if (!continuing || v.env < 0.05f) v.len = v.lenTarget;
           v.vibAmt = 0;                                       // vibrato starts later:
           v.vibDelay = (uint32_t)((0.12f + 0.06f * (1.0f + strRand(s))) * STR_SR);   // ~0.12-0.24 s straight tone,
           v.vibWarm = 0.75f;                                  // then slower and narrower at first
@@ -1019,7 +1021,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     }
     v.strokeN++;
 
-    // pitch glide: legato ~30 ms, portamento ~0.4 s
+    // Continuous finger travel: keep the fractional string length between notes.
+    // The target is never rounded to a semitone; each active voice follows its own
+    // legato slide, including the independently timed ensemble players.
     v.len += (v.lenTarget - v.len) * A.glide;
 
     // bow envelope: attack per articulation, release ~60 ms; staccato and
@@ -1044,19 +1048,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
 
     // vibrato: own oscillator, fades in ~0.3 s after the note starts and
     // grows with the bow speed
-    // finger change while the bow keeps going (legato pitch change): the
-    // finger lands with a small tap and the vibrato stops and starts again
-    if (M.swarm > 0.0f) v.fingerLen = v.lenTarget;         // swarm glides: no finger changes
-    if (fabsf(v.lenTarget - v.fingerLen) > 0.025f * v.fingerLen) {
-      if (v.gate && A.mode == MODE_BOW && v.env > 0.2f) {
-        v.tran += 0.10f;                                     // finger tap noise
-        if (!v.pluck) { v.pluck = true; v.pluckN = 0; v.pluckLen = 10; v.pluckAmp = 0.06f; }
-        v.vibAmt *= 0.3f;
-        v.vibDelay = (uint32_t)(0.05f * STR_SR);
-        v.vibWarm = 0.85f;
-      }
-      v.fingerLen = v.lenTarget;
-    }
+    // Track the finger continuously along the string. A threshold-based
+    // 'finger position' detector made larger slides feel like discrete fret jumps;
+    // the legato onset above already supplies the subtle contact transient.
+    v.fingerLen = v.len;
     if (v.vibDelay) v.vibDelay--;
     else v.vibWarm += (1.0f - v.vibWarm) * 0.00004f;         // settles in ~0.5 s
     // every cycle the hand wobbles a little: new rate (+-4 %) and width (+-15 %)
