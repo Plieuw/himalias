@@ -27,7 +27,8 @@
 //                                   accent, scratch, vibrato); also a gate
 //   - SQUARES MAIN TUNE knob + CV . articulation: legato, detache, martele,
 //                                   staccato, spiccato, sul tasto, sul ponticello,
-//                                   col legno, flageolet, pizzicato, portamento
+//                                   col legno, flageolet, pizzicato, portamento;
+//                                   CV: 1 V = one articulation step from the knob
 //   - TRIGGER in / button ......... gate: bow / pluck / strike; the time between
 //                                   gates is the tempo for vibrato and tremolo
 //   - A/B button (sample side) .... con sordino (mute)
@@ -46,7 +47,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.18.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.19.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -66,6 +67,8 @@ static void seqStep(uint16_t change_adc, bool scaleB);
 // incrementer bipolar = 2/SR * f 
 
 
+// the audio path is built for speed; the Arduino core keeps its size optimisation
+#pragma GCC optimize ("O2")
 #include "strings_engine.h" // bowed strings physical model (v2)
 StringsEngine strings;
 volatile bool strings_cv_bow = false;     // CV IN RATE patched and above ~0.25 V
@@ -679,11 +682,14 @@ void loop() {
   //      col legno, flageolet, pizzicato, portamento
   uint16_t art_poti = adc51.readAnalog(PB03,ADC_Channel15,false);
   uint16_t art_jack = adc51.readAnalog(PB04,ADC_Channel6,true);
-  uint16_t art_sum = art_poti;
-  if(art_jack <= 4000) art_sum += art_jack;
-  if(art_sum > 4000) art_sum = 4000;
+  // knob picks the articulation, the CV adds 1 V per articulation step (so a
+  // sequencer can step through them); 0 V / unpatched = the knob's choice
   static uint16_t art_state = 0;
-  strings.artic = (uint8_t)selectHyst(art_sum, 150, 3900, ART_COUNT - 1, art_state);
+  int art = (int)selectHyst(art_poti, 150, 3900, ART_COUNT - 1, art_state);
+  if(art_jack < 4000) art += (int)lroundf(cvVolts(art_jack));   // normalled jack reads above 4000
+  if(art < 0) art = 0;
+  if(art > ART_COUNT - 1) art = ART_COUNT - 1;
+  strings.artic = (uint8_t)art;
 
   // ---- bow pressure: SAMPLE SELECT knob + CV
   uint16_t cv_sample_select_adc = adc51.readAnalog(PB09,ADC_Channel3,false);

@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.18.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.19.0-beta.uf2`
 
 ## Concept
 
@@ -50,6 +50,7 @@ SAMPLE OUT plays normally.
 | CLOCK RATE knob | bow speed on a log scale: ~9 cm/s (left) ... ~25 cm/s (centre) ... ~70 cm/s (right) |
 | SAMPLE SELECT knob + CV | bow force **relative to the playable window** (Schelleng): the window moves with bow position and bow speed, the knob follows it. Centre = normal tone at any bow position / speed / articulation; left = light (towards flautando / surface sound), right = heavy (towards crunch). CV 1 V = 10 % of the knob |
 | CV IN RATE | dynamic gate 0 ... 10 V (soft ... full); bow speed, grip and level follow it: soft -> normal ~+12 dB |
+| SQUARES MAIN TUNE knob + CV | articulation; the CV adds **1 V per articulation step** to the knob's choice (sequence articulations with a CV sequencer); before v1.19 the CV was added as a raw reading, so a patched 0 V shifted it by half the range |
 | LED CLK | blinks on the detected beat (rhythm analysis), so you can see the tempo was found; diagnose mode: on while the CPU guard has dropped players |
 
 Measured (harmonics-to-noise over the pressure knob, legato / tasto /
@@ -299,7 +300,11 @@ depth per family (violin 5.6 Hz +-17 c ... cello 5.0 Hz +-21 c).
   position changes brightness (ponticello bright, tasto dark).
 - Firmware builds: ~44 KB flash, ~148 KB RAM.
 - **CPU load**: estimated ~80-85% of the time per sample with six players
-  (v1.10 ... v1.13 add ~10 % on the host: vibrato, bowing, noise).
+  (v1.10 ... v1.14 add ~10 % on the host: vibrato, bowing, noise, resonance).
+  v1.19: the sketch / engine is compiled with -O2 (was -Os like the core),
+  idle sympathetic strings are skipped, per-sample divisions moved to the
+  control loop (host: ~11 % faster). Check on the module with the diagnose
+  mode (hold TRIGGER at power-up).
   CPU guard: when the audio interrupt takes more than 90% of the time per
   sample, the firmware drops a player (down to 3) and brings it back after
   ~2 s with room to spare. The serial monitor (115200 baud) prints the worst

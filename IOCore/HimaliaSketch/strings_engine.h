@@ -223,6 +223,7 @@ struct StrVoice {
   float slMul;                    // grip for this note's bow speed
   float bowUsed;                  // part of the bow used (1 = at the tip / frog)
   float bowLen;                   // this player's bow (seconds at normal speed)
+  float bowLenInv;                // 1 / (bowLen * sample rate)
   uint32_t turn;                  // samples left in a bow change
   float slip;                     // last friction state (0 = stick, 1 = slip)
   float alfT;                     // overpressure: time in string periods (0 ... div)
@@ -265,6 +266,7 @@ struct StrSym {
   uint16_t w;
   uint8_t fam;
   uint8_t n;                      // strings this instrument has
+  uint32_t idle;                  // samples without input (rung out -> skipped)
 };
 
 struct StringsEngine {
@@ -287,6 +289,7 @@ struct StringsEngine {
   float beta;                     // bow position: 0.04 ponticello ... 0.3 tasto
   float speedCV;                  // expression CV multiplier (1 = none)
   float bowBase;                  // bow speed from the knob (log scale)
+  float swellK;                   // note swell speed (from the model)
   bool  pizz, vibrato, tremolo;   // pizz: kept for compatibility (= ART_PIZZICATO)
   bool  mute;                     // con sordino
   uint8_t artic;
@@ -455,6 +458,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.vibDelay = 0; v.vibWarm = 1.0f; v.jitR = v.jitRT = v.jitD = v.jitDT = 1.0f;
     v.vibPrevS = 0.0f; v.fingerLen = v.len;
     v.bowMul = 1.0f; v.bowGain = 1.0f; v.slMul = 1.0f; v.bowUsed = 0.0f; v.bowLen = 3.0f * (0.85f + 0.3f * (0.5f + 0.5f * strRand(s)));
+    v.bowLenInv = 1.0f / (v.bowLen * STR_SR);
     v.turn = 0; v.slip = 0.0f; v.tBp1 = v.tBp2 = 0.0f;
     v.alfT = 0.0f;
     v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = 0.0f;
@@ -469,7 +473,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.family = FAM_VIOLIN;
     v.active = (i == 0); v.gate = false; v.pluck = false;
   }
-  s.rootHz = 220.0f; s.speed = 0.5f; s.pressure = 0.5f; s.beta = 0.12f; s.speedCV = 1.0f; s.bowBase = 0.113f;
+  s.rootHz = 220.0f; s.speed = 0.5f; s.pressure = 0.5f; s.beta = 0.12f; s.speedCV = 1.0f; s.bowBase = 0.113f; s.swellK = 1.0f;
   s.pizz = false; s.vibrato = true; s.tremolo = false; s.mute = false; s.artic = ART_LEGATO;
   for (int f = 0; f < STR_FAMILIES; f++) { s.famLp[f] = 0; s.famLpLead[f] = 0; s.famLpK[f] = 0.5f; }
   s.outDivisi = 0; s.dc2x = s.dc2y = 0;
@@ -493,7 +497,7 @@ static inline void stringsInit(StringsEngine &s) {
       for (int n = 0; n < STR_SYM_LEN; n++) y.buf[j][n] = 0.0f;
       y.len[j] = 200.0f; y.g[j] = 0.0f; y.lp[j] = 0.0f;
     }
-    y.in = y.out = 0.0f; y.w = 0; y.fam = FAM_VIOLIN; y.n = 4;
+    y.in = y.out = 0.0f; y.w = 0; y.fam = FAM_VIOLIN; y.n = 4; y.idle = 0;
   }
   {                                                         // air band: 4th order highpass 9.5 kHz
     StrAir &a = s.airF;
@@ -667,6 +671,7 @@ static inline void stringsControl(StringsEngine &s) {
   // the CLOCK RATE knob: bow speed on a log scale like real bow speeds,
   // ~9 cm/s (fully left) ... ~25 cm/s (centre) ... ~70 cm/s (fully right)
   s.bowBase = 0.04f * powf(8.0f, strClamp(s.speed, 0.0f, 1.0f));
+  s.swellK = M.swell > 0 ? 1.0f / (M.swell * STR_SR) : 1.0f;
   // the PRESSURE knob is relative to the playable (Helmholtz) window, which
   // moves with the bow position like on a real instrument (Schelleng): over
   // the fingerboard a light bow, near the bridge more force. Centre = normal
@@ -856,6 +861,9 @@ static inline __attribute__((always_inline)) float strRead(const float *buf, uin
 
 // the open strings: feedback combs (all harmonics), highs damped in the loop
 static inline float strSymTick(StrSym &y, float x) {
+  // nothing coming in for 4 s: the open strings have rung out, skip them
+  if (x == 0.0f) { if (y.idle < (uint32_t)(4.0f * STR_SR)) y.idle++; else return 0.0f; }
+  else y.idle = 0;
   const float in = x * y.in;
   float out = 0.0f;
   const uint16_t w = y.w;
@@ -906,7 +914,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   const StrModelDef &M = s.model;
   const bool solo = (M.ins == INS_SOLO_VIOLIN || M.ins == INS_SOLO_VIOLA || M.ins == INS_SOLO_CELLO);
   const bool trem = M.trem > 0 ? true : (M.trem == 0 ? false : s.tremolo);
-  const float swellK = M.swell > 0 ? 1.0f / (M.swell * STR_SR) : 1.0f;
+  const float swellK = s.swellK;
   // trill: the upper note shortens the string
   bool trillUp = false;
   if (M.trill) {
@@ -1118,7 +1126,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // turns (scratch) and speeds up again, ~90 ms. Every player has their
       // own bow length, so a section changes bow at different moments
       if (bowing && !trem && !strokeMax) {
-        v.bowUsed += v.bowMul * (0.4f + 0.6f * s.speed) * v.env / (v.bowLen * STR_SR);
+        v.bowUsed += v.bowMul * (0.4f + 0.6f * s.speed) * v.env * v.bowLenInv;
         if (v.bowUsed >= 1.0f && !v.turn) { v.turn = (uint32_t)(0.09f * STR_SR); v.bowUsed = 0.0f; }
       }
       if (v.turn) {
