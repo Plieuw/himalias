@@ -18,3 +18,7 @@ jobs:
         run: g++ -std=c++11 -O2 -Wall -Wextra -Werror tests/strings_engine_smoke.cpp -o strings_engine_smoke
       - name: Run DSP test
         run: ./strings_engine_smoke
+      - name: Compile relative loudness report
+        run: g++ -std=c++11 -O2 -Wall -Wextra -Werror tests/strings_level_report.cpp -o strings_level_report
+      - name: Report relative loudness for all models
+        run: ./strings_level_report
