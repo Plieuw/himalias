@@ -17,7 +17,7 @@
 //   - diagnose: hold TRIGGER while powering up -> divisi out = CPU load
 //                                   (0 ... +5 V = 0 ... 100 %), trigger out high
 //                                   while the CPU guard has dropped players
-//   - CV IN RATE jack ............. dynamic gate / bow CV: the level (0 ... 8 V)
+//   - CV IN RATE jack ............. dynamic gate / bow CV: the level (0 ... 10 V)
 //                                   is how hard the bow plays (speed, pressure,
 //                                   accent, scratch, vibrato); also a gate
 //   - SQUARES MAIN TUNE knob + CV . articulation: legato, detache, martele,
@@ -41,7 +41,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.15.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.16.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -597,11 +597,26 @@ void loop() {
   uint16_t bow_speed_adc = adc51.readAnalog(PB02,ADC_Channel14,false);
   uint16_t bow_cv_adc    = adc51.readAnalog(PB01,ADC_Channel13,false);
   strings.speed = (float)bow_speed_adc * (1.0f / 4095.0f);
-  // CV IN RATE = dynamic gate / bow CV: the level is how hard the bow plays
-  // (0 ... 8 V = soft ... full, up to 10 V a bit more). Above ~0.4 V it is
-  // also a gate: plays notes, steps the divisi and gives the tempo.
+  // CV IN RATE = dynamic gate / bow CV: the level is how hard the bow plays,
+  // 0 ... 10 V = soft ... full (linear). Above ~0.4 V it is also a gate: plays
+  // notes, steps the divisi and gives the tempo.
+  // An empty jack also reads high (normalled), just like a 10 V gate, so the
+  // jack only counts as empty after reading high for 6 s without a break
+  // since it was last below that (a 10 V gate plays at full strength).
+  static bool     cv_rate_patched = false;
+  static uint32_t cv_rate_low_ms  = 0;
+  const uint32_t now_ms = millis();
+  float rate_volts;
   if(bow_cv_adc < SYNC_UNPATCHED){
-    float c = cvVolts(bow_cv_adc) * (1.0f / 8.0f);
+    cv_rate_patched = true;
+    cv_rate_low_ms  = now_ms;
+    rate_volts = cvVolts(bow_cv_adc);
+  } else {
+    if(cv_rate_patched && now_ms - cv_rate_low_ms > 6000) cv_rate_patched = false;
+    rate_volts = 10.0f;                                  // at / above the top of the input
+  }
+  if(cv_rate_patched){
+    float c = rate_volts * (1.25f / 9.8f);               // 0 ... 10 V -> 0 ... full (1.25)
     if(c < 0.0f) c = 0.0f;
     if(c > 1.25f) c = 1.25f;
     static float cs = 0.0f;

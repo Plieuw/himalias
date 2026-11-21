@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.15.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.16.0-beta.uf2`
 
 ## Concept
 
@@ -20,7 +20,7 @@ the former squares sequencer now drive the **generative divisi**.
 | SPREAD knob + CV | layout: unison, octaves, fifths, major, minor, divisi major, divisi minor, cluster |
 | SAMPLE SELECT knob + CV | bow pressure |
 | CLOCK RATE knob | bow speed |
-| CV IN RATE jack | **dynamic gate** / bow CV, 0 ... 8 V (up to 10 V a bit more): the level is how hard the bow plays. Above ~0.4 V it is also a gate (plays notes, steps the divisi, gives the tempo). A slow CV here makes swells |
+| CV IN RATE jack | **dynamic gate** / bow CV, 0 ... 10 V = soft ... full (linear): the level is how hard the bow plays. Above ~0.4 V it is also a gate (plays notes, steps the divisi, gives the tempo). A slow CV here makes swells |
 | SQUARES MAIN TUNE knob + CV | articulation (11 steps, see below); the CV can sequence articulations |
 | TRIGGER in / button | gate: bow / pluck / strike; steps the divisi register; the rhythm of the gates gives the tempo (also irregular ostinati) |
 | A/B button (sample side) | A = open, B = con sordino (mute: darker, softer, shorter ring) |
@@ -43,6 +43,12 @@ until the next power-up:
 SAMPLE OUT plays normally.
 
 ## Dynamic gates
+
+0 ... 10 V = soft ... full, linear (v1.16; before: full at 8 V and gates above
+~9.4 V were mistaken for an empty jack). An empty jack also reads at the top
+of the range, so the jack only counts as empty after reading at the top for
+6 s without a break; a 10 V gate plays at full strength (a note held at the
+very top for more than 6 s stops).
 
 The TRIGGER input only knows on / off. For velocity, patch a dynamic gate
 (gate whose height is the velocity) into CV IN RATE. Per note the level sets:
