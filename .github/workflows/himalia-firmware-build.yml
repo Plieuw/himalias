@@ -1,0 +1,24 @@
+name: Himalia firmware build
+
+on:
+  push:
+    branches:
+      - himalia-strings-beta
+  pull_request:
+    branches:
+      - himalia-strings-beta
+  workflow_dispatch:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the repository toolchain image
+        run: docker build -t himalia-iocore IOCore
+      - name: Compile Himalia firmware
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/PRJ" \
+            -v "${{ github.workspace }}/IOCore/variant_IOCore:/root/.arduino15/packages/dadamachines_doppler/hardware/samd/1.2.9/variants/IOCore" \
+            himalia-iocore bash -lc "arduino-cli compile --output-dir /tmp/himalia-build --fqbn dadamachines_doppler:samd:Himalia /PRJ/IOCore/HimaliaSketch/"
