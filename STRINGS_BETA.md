@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.16.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.17.0-beta.uf2`
 
 ## Concept
 
@@ -60,12 +60,17 @@ end is softly limited.
 
 ## Output level
 
-Both audio outputs are scaled to Eurorack level: digital +-1 = +-5 V
-(10 Vpp), centred on the DAC code that gives 0 V at the jack. The scaling
-comes from the output stage in the preliminary schematic
-(Vout = DAC volts x 3.397 - 6.05 V); if a module differs, adjust
-`SEQ_CV_ZERO_CODE` / `SEQ_CV_CODES_PER_V`. Typical playing peaks at ~+-5 V,
-loud accents are softly limited.
+The hardware output stage (Vout = DAC V x 3.397 - 6.05) can give about
+-6 ... +5.1 V; centred on 0 V that is +-5.1 V (10 Vpp, the Eurorack audio
+standard). +-8 V is not possible with this output stage.
+
+v1.17: make-up gain (x1.5) into a **look-ahead limiter** (1.3 ms look-ahead,
+~80 ms release, ceiling +-4.85 V) on both outputs, and no clipper anywhere
+(the soft clip is gone; the waveform is not touched, only the gain moves).
+Without a dynamic gate most models peak at ~4.4 ... 4.9 V; with a dynamic
+gate soft notes stay ~7 dB below normal ones, only the loudest are flattened.
+More make-up gain would only flatten the dynamics (a sustained bowed tone has
+a fixed peak-to-average ratio), so this is about as loud as it gets cleanly.
 
 ## Articulations (SQUARES MAIN TUNE, left to right)
 
