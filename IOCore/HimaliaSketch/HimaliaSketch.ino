@@ -287,8 +287,9 @@ void setup() {
   pinMode(PA22,OUTPUT); // PWM OUT
 
   pinMode(PB01,INPUT_PULLUP); // SQR1
-  pinMode(PA21,INPUT_PULLUP); // SQR1
-  pinMode(PB17,INPUT_PULLUP); // 8Bit or sample Button
+  pinMode(PA20,INPUT_PULLUP); // A/B: violin / cello
+  pinMode(PA21,INPUT_PULLUP); // squares scale selector
+  pinMode(PB17,INPUT_PULLUP); // BIT: bow gate
   pinMode(PB16,INPUT_PULLUP); // Manual Trigger
   pinMode(PB23,INPUT_PULLUP); // Manual Trigger
   
@@ -647,8 +648,8 @@ void loop() {
   const uint8_t mode = (uint8_t)selectHyst(model_adc, 300, 3750, 6, model_state);
   static uint8_t previous_instrument = 255;
   if(instrument != previous_instrument){
-    stringsSetInstrument(strings, instrument);
     __disable_irq();
+    stringsSetInstrument(strings, instrument);
     stringsClear(strings);
     __enable_irq();
     previous_instrument = instrument;
