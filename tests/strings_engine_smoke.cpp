@@ -62,7 +62,10 @@ int main() {
       if (lay >= LAY_DIVISI_MAJOR) stringsDivisi(s, 0xB3A5);
       stringsControl(s);
       if (!render(true, 60000, x)) { std::printf("FAIL ins %d lay %d: not finite\n", ins, lay); ++fails; continue; }
-      const double r = rms(x, 20000, 60000);
+      // short-stroke models (spiccato ostinato) stop while the gate is held:
+      // for them the start must sound, for the others the sustain
+      const bool shortStroke = STR_ARTIC[s.articEff].stroke > 0.0f;
+      const double r = shortStroke ? rms(x, 0, 8000) : rms(x, 20000, 60000);
       const float p = peak(x);
       if (r < 0.02 || p > 1.0f) { std::printf("FAIL ins %d lay %d: rms %.3f peak %.3f\n", ins, lay, r, p); ++fails; }
     }

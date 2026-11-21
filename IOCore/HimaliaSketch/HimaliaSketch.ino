@@ -3,10 +3,13 @@
 //
 //  SAMPLE OUT: up to six bowed strings from one pitch CV (strings_engine.h)
 //   - SAMPLE TUNE knob + CV ....... pitch (knob 7 octaves, CV 1 V/oct, -10 ... +10 V)
-//   - RATCHET knob ................ instrument: solo violin, solo cello, violin
-//                                   section, cello section, full strings
+//   - RATCHET knob ................ model (14): solo violin, solo cello, violin
+//                                   section, cello section, full strings, molto
+//                                   vibrato violin, romantic cello, tremolo section,
+//                                   trill section, epic ostinato, suspense, heroic
+//                                   theme, emotional swell, shimmer
 //   - SPREAD knob + CV ............ layout: unison, octaves, fifths, major, minor,
-//                                   divisi major, divisi minor (sections only)
+//                                   divisi major, divisi minor, cluster
 //   - SAMPLE SELECT knob + CV ..... bow pressure
 //   - CLOCK RATE knob ............. bow speed
 //   - CV IN RATE jack ............. bow speed CV (expression); when patched the
@@ -32,7 +35,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.3.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.4.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -651,7 +654,7 @@ void loop() {
     dbg_ms = millis();
     Serial.print("hz ");        Serial.print(strings.rootHz, 1);
     Serial.print("  tune_cv "); Serial.print(cvVolts(sample_pitch_jack), 2);
-    Serial.print(" V  instr "); Serial.print(strings.instrument);
+    Serial.print(" V  model "); Serial.print(strings.instrument);
     Serial.print("  layout ");  Serial.print(strings.layout);
     Serial.print("  speed ");   Serial.print(strings.speed, 2);
     Serial.print("  press ");   Serial.print(strings.pressure, 2);

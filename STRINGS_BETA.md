@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.3.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.4.0-beta.uf2`
 
 ## Concept
 
@@ -16,8 +16,8 @@ the former squares sequencer now drive the **generative divisi**.
 | Himalia control | Strings function |
 |---|---|
 | SAMPLE TUNE knob + CV | pitch: knob 7 octaves from A0, CV 1 V/oct (-10 ... +10 V) |
-| RATCHET knob | instrument: solo violin, solo cello, violin section, cello section, full strings |
-| SPREAD knob + CV | layout: unison, octaves, fifths, major, minor, divisi major, divisi minor |
+| RATCHET knob | model (14, see below) |
+| SPREAD knob + CV | layout: unison, octaves, fifths, major, minor, divisi major, divisi minor, cluster |
 | SAMPLE SELECT knob + CV | bow pressure |
 | CLOCK RATE knob | bow speed |
 | CV IN RATE jack | bow speed CV (0 ... +5 V). When patched, the CV alone can bow (swells without a gate) |
@@ -67,12 +67,38 @@ The time between gate starts is the tempo (must repeat within ~15%, 10 ms ...
 to ~13 strokes per second, with the strokes starting on the beat. Without a
 steady clock both run free (every player slightly different).
 
+## Models (RATCHET knob, left to right)
+
+| # | model | what it is |
+|---|---|---|
+| 1 | solo violin | one violin |
+| 2 | solo cello | one cello |
+| 3 | violin section | six violins |
+| 4 | cello section | six cellos |
+| 5 | full strings | violin I, violin II, viola, cello, cello, double bass |
+| 6 | molto vibrato violin | solo violin, wider and faster vibrato |
+| 7 | romantic cello | solo cello, slow wide vibrato, every note swells a little (legato) |
+| 8 | tremolo section | violins, always tremolo on the tempo, tight ensemble |
+| 9 | trill section | violins trilling a whole tone, ~9 notes/s or on the tempo |
+| 10 | epic ostinato | violas, cellos and basses in octaves, short punchy spiccato, very tight (trailer-style ostinatos) |
+| 11 | suspense | violins sul ponticello tremolo in a semitone cluster (thriller / horror) |
+| 12 | heroic theme | full strings in octaves, marcato, big vibrato (epic themes) |
+| 13 | emotional swell | full strings, every note swells in over ~1.6 s, rich vibrato |
+| 14 | shimmer | violins sul tasto in octaves, slow vibrato, slow swell (airy high pads) |
+
+Models 7 ... 14 set their own articulation and/or layout; the knobs for those
+are then ignored (the models that leave them free still follow the knobs).
+Models 10 ... 14 are inspired by typical film-score string writing, not copies
+of any score.
+
 ## Instruments and layouts
 
 - **Solo violin / solo cello**: one player, the layout is ignored.
 - **Violin / cello section**: six players of the same family.
 - **Full strings**: violin I, violin II, viola, cello, cello, double bass, each
   in their own register (unison = everyone on the note in their octave).
+- **Low strings** (used by epic ostinato): violas, cellos and basses.
+- **Cluster** layout: neighbouring semitones around the note.
 - Layouts per player (semitones): see `STR_SECTION_LAYOUT` / `STR_FULL_LAYOUT`
   in `strings_engine.h`.
 - **Divisi**: on every trigger the 16-bit Turing register shifts (25% chance the

@@ -35,10 +35,17 @@
 #define STR_BODY_MODES 6
 
 enum StrFamily     : uint8_t { FAM_VIOLIN = 0, FAM_VIOLA, FAM_CELLO, FAM_BASS };
+// base ensembles
 enum StrInstrument : uint8_t { INS_SOLO_VIOLIN = 0, INS_SOLO_CELLO, INS_VIOLIN_SECTION,
-                               INS_CELLO_SECTION, INS_FULL_STRINGS, INS_COUNT };
+                               INS_CELLO_SECTION, INS_FULL_STRINGS, INS_LOW_STRINGS, INS_BASE_COUNT };
 enum StrLayout     : uint8_t { LAY_UNISON = 0, LAY_OCTAVES, LAY_FIFTHS, LAY_MAJOR, LAY_MINOR,
-                               LAY_DIVISI_MAJOR, LAY_DIVISI_MINOR, LAY_COUNT };
+                               LAY_DIVISI_MAJOR, LAY_DIVISI_MINOR, LAY_CLUSTER, LAY_COUNT };
+// models on the RATCHET knob: a base ensemble plus playing style
+enum StrModel : uint8_t { MDL_SOLO_VIOLIN = 0, MDL_SOLO_CELLO, MDL_VIOLIN_SECTION, MDL_CELLO_SECTION,
+                          MDL_FULL_STRINGS, MDL_MOLTO_VIBRATO, MDL_ROMANTIC_CELLO, MDL_TREMOLO_SECTION,
+                          MDL_TRILL_SECTION, MDL_EPIC_OSTINATO, MDL_SUSPENSE, MDL_HEROIC,
+                          MDL_EMOTIONAL_SWELL, MDL_SHIMMER, MDL_COUNT };
+#define INS_COUNT MDL_COUNT        // the RATCHET knob selects one of the models
 
 // Articulations (SQUARES MAIN TUNE knob + CV)
 enum StrArtic : uint8_t { ART_LEGATO = 0, ART_DETACHE, ART_MARTELE, ART_STACCATO, ART_SPICCATO,
@@ -78,6 +85,39 @@ static const StrArticDef STR_ARTIC[ART_COUNT] = {
   { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0010f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00012f, 0.60f, 0, false, true  },  // portamento
 };
 
+// ------------------------------------------------------------------ models
+struct StrModelDef {
+  uint8_t ins;        // base ensemble
+  int8_t  artic;      // forced articulation, -1 = SQUARES MAIN TUNE knob
+  int8_t  layout;     // forced layout, -1 = SPREAD knob
+  int8_t  trem;       // 1 = always tremolo, 0 = never, -1 = BIT switch
+  float   vibDepth;   // vibrato depth multiplier
+  float   vibRate;    // vibrato rate multiplier
+  float   swell;      // seconds for a note to swell to full bow (0 = off)
+  int8_t  trill;      // trill interval in semitones (0 = off)
+  float   accent;     // accent multiplier
+  float   tight;      // onset spread multiplier (ensemble timing)
+  float   ring;       // ring-out multiplier (short = punchy)
+  float   gain;       // level (short low notes need more)
+};
+static const StrModelDef STR_MODELS[MDL_COUNT] = {
+  //  base                art            layout        trem vibD  vibR  swell trill accent tight ring gain
+  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // solo violin
+  { INS_SOLO_CELLO,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // solo cello
+  { INS_VIOLIN_SECTION, -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // violin section
+  { INS_CELLO_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // cello section
+  { INS_FULL_STRINGS,   -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // full strings
+  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.9f, 1.15f, 0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // molto vibrato violin
+  { INS_SOLO_CELLO,     ART_LEGATO,    -1,           -1, 1.7f, 0.8f,  0.6f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // romantic cello
+  { INS_VIOLIN_SECTION, ART_DETACHE,   -1,            1, 0.5f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.0f },  // tremolo section
+  { INS_VIOLIN_SECTION, ART_LEGATO,    -1,           -1, 0.3f, 1.0f,  0.0f, 2,   1.0f,  0.5f, 1.0f, 1.0f },  // trill section (whole tone)
+  { INS_LOW_STRINGS,    ART_SPICCATO,  LAY_OCTAVES,   0, 0.0f, 1.0f,  0.0f, 0,   3.5f,  0.2f, 0.25f, 2.4f },  // epic ostinato
+  { INS_VIOLIN_SECTION, ART_PONTICELLO,LAY_CLUSTER,   1, 0.2f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.0f },  // suspense
+  { INS_FULL_STRINGS,   ART_MARTELE,   LAY_OCTAVES,  -1, 1.6f, 1.1f,  0.0f, 0,   1.4f,  0.6f, 1.0f, 1.0f },  // heroic theme
+  { INS_FULL_STRINGS,   ART_LEGATO,    -1,           -1, 1.4f, 0.95f, 1.6f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // emotional swell
+  { INS_VIOLIN_SECTION, ART_TASTO,     LAY_OCTAVES,  -1, 0.7f, 0.75f, 2.2f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // shimmer
+};
+
 // lowest open string per family (Hz): notes below are played an octave up
 static const float STR_FAMILY_LOW[STR_FAMILIES] = { 196.0f, 130.8f, 65.4f, 41.2f };
 
@@ -104,6 +144,7 @@ struct StrVoice {
   uint32_t strokeN;               // samples since the stroke started
   float dir;                      // bow direction +1 / -1
   float accent;                   // stroke accent (decays)
+  float swell;                    // note swell (0 ... 1)
   uint32_t nrng;                  // own noise generator (bow / rosin noise)
   float ringLoss;                 // string loss per round trip once the bow is off
   float hz;                       // this player's note (for the square outputs)
@@ -131,6 +172,9 @@ struct StringsEngine {
   bool  mute;                     // con sordino
   uint8_t artic;
   uint8_t maxVoices;              // CPU guard: the firmware lowers this when the audio interrupt gets too slow
+  float trillPh, trillInc;        // trill (alternating upper note)
+  StrModelDef model;              // current model (copied by stringsControl)
+  uint8_t articEff;               // articulation in use (model or knob)
   uint8_t instrument, layout;
   // divisi from the generative register
   uint8_t divisiMask;
@@ -197,6 +241,7 @@ static const int8_t STR_SECTION_LAYOUT[LAY_COUNT][STR_VOICES] = {
   { 0, 3, 7, 12, 15, 19 },       // minor
   { 0, 0, 0, 0, 0, 0 },          // divisi (tones come from the register)
   { 0, 0, 0, 0, 0, 0 },
+  { 0, 1, 2, -1, 3, -2 },        // cluster (semitones)
 };
 static const int8_t STR_FULL_LAYOUT[LAY_COUNT][STR_VOICES] = {
   { 0, 0, 0, -12, -12, -24 },    // unison: everybody on the note, in their register
@@ -206,8 +251,22 @@ static const int8_t STR_FULL_LAYOUT[LAY_COUNT][STR_VOICES] = {
   { 15, 7, 3, -12, -5, -24 },    // minor
   { 0, 0, 0, -12, -12, -24 },    // divisi: register adds chord tones on top
   { 0, 0, 0, -12, -12, -24 },
+  { 1, 0, -1, -12, -11, -24 },   // cluster
 };
 static const uint8_t STR_FULL_FAMILY[STR_VOICES] = { FAM_VIOLIN, FAM_VIOLIN, FAM_VIOLA, FAM_CELLO, FAM_CELLO, FAM_BASS };
+// low strings: violas, cellos and basses in octaves
+static const int8_t STR_LOW_LAYOUT[LAY_COUNT][STR_VOICES] = {
+  { 0, 0, -12, -12, -24, -24 },  // unison
+  { 0, 12, -12, 0, -24, -12 },   // octaves
+  { 7, 0, -5, -12, -17, -24 },   // fifths
+  { 4, 7, -12, -5, -24, -12 },   // major
+  { 3, 7, -12, -5, -24, -12 },   // minor
+  { 0, 0, -12, -12, -24, -24 },  // divisi
+  { 0, 0, -12, -12, -24, -24 },
+  { 0, 1, -12, -11, -24, -23 },  // cluster
+};
+static const uint8_t STR_LOW_FAMILY[STR_VOICES] = { FAM_VIOLA, FAM_VIOLA, FAM_CELLO, FAM_CELLO, FAM_BASS, FAM_BASS };
+
 static const int8_t STR_DIVISI_MAJOR[8] = { 0, 4, 7, 12, 16, 19, -5, 24 };
 static const int8_t STR_DIVISI_MINOR[8] = { 0, 3, 7, 12, 15, 19, -5, 24 };
 
@@ -247,7 +306,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.drift = v.driftTarget = 0;
     v.gain = 1.0f;
     v.onset = 0; v.pluckN = v.pluckLen = 0; v.pluckAmp = 0.5f;
-    v.strokeN = 0; v.dir = 1.0f; v.accent = 0.0f;
+    v.strokeN = 0; v.dir = 1.0f; v.accent = 0.0f; v.swell = 1.0f;
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
     v.ringLoss = 0.99f;
     v.hz = 220.0f;
@@ -260,7 +319,9 @@ static inline void stringsInit(StringsEngine &s) {
   s.outDivisi = 0; s.dc2x = s.dc2y = 0;
   s.bowNoise = 0.0f;
   s.sinceGate = 0; s.clockPeriod = 0; s.lastPeriod = 0; s.vibHz = 0; s.tremHz = 6.5f;
-  s.instrument = INS_SOLO_VIOLIN; s.layout = LAY_UNISON; s.maxVoices = STR_VOICES;
+  s.instrument = MDL_SOLO_VIOLIN; s.layout = LAY_UNISON; s.maxVoices = STR_VOICES;
+  s.trillPh = 0; s.trillInc = 9.0f / STR_SR;
+  s.model = STR_MODELS[0]; s.articEff = ART_LEGATO;
   s.divisiMask = 0x3F;
   for (int i = 0; i < STR_VOICES; i++) s.divisiTone[i] = 0;
   s.gatePrev = false;
@@ -277,14 +338,18 @@ static inline float strLpDelay(float k, float f) {
 
 // ------------------------------------------------------------------ control (loop)
 static inline void stringsControl(StringsEngine &s) {
-  const uint8_t ins = s.instrument < INS_COUNT ? s.instrument : 0;
-  const uint8_t lay = s.layout < LAY_COUNT ? s.layout : 0;
+  const StrModelDef &M = STR_MODELS[s.instrument < MDL_COUNT ? s.instrument : 0];
+  const uint8_t ins = M.ins;
+  const uint8_t lay = M.layout >= 0 ? (uint8_t)M.layout : (s.layout < LAY_COUNT ? s.layout : 0);
   const bool solo = (ins == INS_SOLO_VIOLIN || ins == INS_SOLO_CELLO);
   const bool full = (ins == INS_FULL_STRINGS);
+  const bool low  = (ins == INS_LOW_STRINGS);
   const bool divisi = (lay == LAY_DIVISI_MAJOR || lay == LAY_DIVISI_MINOR);
   const int8_t *pool = (lay == LAY_DIVISI_MAJOR) ? STR_DIVISI_MAJOR : STR_DIVISI_MINOR;
 
-  const uint8_t art = s.pizz ? (uint8_t)ART_PIZZICATO : (s.artic < ART_COUNT ? s.artic : 0);
+  const uint8_t art = s.pizz ? (uint8_t)ART_PIZZICATO
+                  : (M.artic >= 0 ? (uint8_t)M.artic : (s.artic < ART_COUNT ? s.artic : 0));
+  s.articEff = art;
   const StrArticDef &A = STR_ARTIC[art];
   s.beta = A.beta;
   // bow: pressure sets the friction curve (higher pressure = longer sticking,
@@ -305,6 +370,19 @@ static inline void stringsControl(StringsEngine &s) {
     s.famLpK[f] = 1.0f - expf(-6.2831853f * fc / STR_SR);
   }
 
+  const float vibRateM = M.vibRate;
+  // ---- trill: ~9 alternations per second, on the tempo when there is a clock
+  {
+    float th = 9.0f;
+    if (s.clockPeriod) {
+      const float bh = STR_SR / (float)s.clockPeriod;
+      static const float tm[6] = { 2.0f, 3.0f, 4.0f, 6.0f, 8.0f, 12.0f };
+      float best = 9.0f, d = 1e9f;
+      for (int k = 0; k < 6; k++) { const float e = fabsf(logf(bh * tm[k] / 9.0f)); if (e < d) { d = e; best = bh * tm[k]; } }
+      if (d < 0.6f) th = best;
+    }
+    s.trillInc = 0.5f * th / STR_SR;                          // one cycle = two notes
+  }
   // ---- tempo sync: pick the beat subdivision nearest to the natural rate
   //      vibrato ~5.5 Hz, tremolo ~13 bow strokes per second
   const bool synced = s.clockPeriod > 0;
@@ -314,7 +392,7 @@ static inline void stringsControl(StringsEngine &s) {
     float bestV = 0, bestT = 0, dV = 1e9f, dT = 1e9f;
     for (int k = 0; k < 12; k++) {
       const float r = beatHz * mult[k];
-      const float ev = fabsf(logf(r / 5.5f)), et = fabsf(logf(r / 13.0f));
+      const float ev = fabsf(logf(r / (5.5f * vibRateM))), et = fabsf(logf(r / 13.0f));
       if (ev < dV) { dV = ev; bestV = r; }
       if (et < dT) { dT = et; bestT = r; }
     }
@@ -339,16 +417,17 @@ static inline void stringsControl(StringsEngine &s) {
     int semis;
     if (solo)      { fam = (ins == INS_SOLO_CELLO) ? FAM_CELLO : FAM_VIOLIN; semis = 0; }
     else if (full) { fam = STR_FULL_FAMILY[i]; semis = STR_FULL_LAYOUT[lay][i]; }
+    else if (low)  { fam = STR_LOW_FAMILY[i];  semis = STR_LOW_LAYOUT[lay][i]; }
     else           { fam = (ins == INS_CELLO_SECTION) ? FAM_CELLO : FAM_VIOLIN; semis = STR_SECTION_LAYOUT[lay][i]; }
     if (divisi && !solo && i > 0) semis += pool[s.divisiTone[i] & 7];
     semis += A.semis;
     v.family = fam;
     // vibrato rate: on the tempo when there is a steady clock, otherwise free
     // (every player a little different)
-    v.vibK = 6.2831853f * (s.vibHz > 0 ? s.vibHz : STR_VIB_RATE[fam] * v.vibRateMul) / STR_SR;
+    v.vibK = 6.2831853f * (s.vibHz > 0 ? s.vibHz : STR_VIB_RATE[fam] * v.vibRateMul * M.vibRate) / STR_SR;
     // tremolo: exactly on the tempo when synced, otherwise every player a bit different
     v.tremInc = s.tremHz * (synced ? 1.0f : v.vibRateMul) / STR_SR;
-    v.vibDepth = STR_VIB_DEPTH[fam] * v.vibDepthMul;
+    v.vibDepth = STR_VIB_DEPTH[fam] * v.vibDepthMul * M.vibDepth;
 
     // slow intonation drift: every player wanders a few cents
     if ((s.rng & 0xFF) < 2) v.driftTarget = 4.0f * strRand(s);
@@ -364,7 +443,7 @@ static inline void stringsControl(StringsEngine &s) {
     // loop length minus the delay of the bridge filter and the junction
     float len = STR_SR / hz - strLpDelay(s.bridgeK, hz) - s.lenComp;
     // ring-out after the bow / pluck: the same time for every note
-    v.ringLoss = powf(0.001f, 1.0f / (A.ring * (s.mute ? 0.6f : 1.0f) * hz));
+    v.ringLoss = powf(0.001f, 1.0f / (A.ring * M.ring * (s.mute ? 0.6f : 1.0f) * hz));
     v.lenTarget = strClamp(len, 8.0f, (float)(STR_NECK_LEN - 8));
 
     // family balance in the full section; high notes lose level in the
@@ -377,10 +456,12 @@ static inline void stringsControl(StringsEngine &s) {
   s.level = 1.0f / sqrtf((float)(nActive > 0 ? nActive : 1));
   if (solo) s.level *= 1.3f;
   if (s.mute) s.level *= 0.75f;
+  s.level *= M.gain;
   // which instrument bodies are in use
   uint8_t used = 0;
   for (int i = 1; i < STR_VOICES; i++) if (s.v[i].active) used |= (uint8_t)(1 << s.v[i].family);   // divisi bodies
   s.famUsed = used;
+  s.model = M;
 }
 
 // ------------------------------------------------------------------ audio (interrupt)
@@ -397,7 +478,18 @@ static inline __attribute__((always_inline)) float strRead(const float *buf, uin
 // gate: bow on (arco) / pluck on the rising edge (pizzicato)
 static inline float stringsTick(StringsEngine &s, bool gate) {
   // ---- gate edges: every player gets a small onset delay in a section
-  const bool solo = (s.instrument == INS_SOLO_VIOLIN || s.instrument == INS_SOLO_CELLO);
+  const StrModelDef &M = s.model;
+  const bool solo = (M.ins == INS_SOLO_VIOLIN || M.ins == INS_SOLO_CELLO);
+  const bool trem = M.trem > 0 ? true : (M.trem == 0 ? false : s.tremolo);
+  const float swellK = M.swell > 0 ? 1.0f / (M.swell * STR_SR) : 1.0f;
+  // trill: the upper note shortens the string
+  bool trillUp = false;
+  if (M.trill) {
+    s.trillPh += s.trillInc;
+    if (s.trillPh >= 1.0f) s.trillPh -= 1.0f;
+    trillUp = s.trillPh >= 0.5f;
+  }
+  const float trillRatio = M.trill == 2 ? 0.8908987f : (M.trill == 1 ? 0.9438743f : 1.0f);
   // ---- tempo: time between gate starts (10 ms ... 4 s), must repeat
   if (s.sinceGate < 0xFFFFFFF0u) s.sinceGate++;
   if (gate && !s.gatePrev) {
@@ -419,14 +511,13 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     for (int i = 0; i < STR_VOICES; i++) {
       StrVoice &v = s.v[i];
       const float r = 0.5f + 0.5f * strRand(s);
-      v.onset = solo ? 0 : (uint32_t)(r * (gate ? 0.035f : 0.015f) * STR_SR);
+      v.onset = solo ? 0 : (uint32_t)(r * (gate ? 0.035f : 0.015f) * M.tight * STR_SR);
     }
     s.gatePrev = gate;
   }
 
   const float bowMax = (0.03f + 0.20f * s.speed) * s.speedCV;
-  const uint8_t art = s.pizz ? (uint8_t)ART_PIZZICATO : (s.artic < ART_COUNT ? s.artic : 0);
-  const StrArticDef &A = STR_ARTIC[art];
+  const StrArticDef &A = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : 0];
   const uint32_t strokeMax = (uint32_t)(A.stroke * STR_SR);
   float famBus[STR_FAMILIES]  = { 0, 0, 0, 0 };   // divisi players
   float leadBus = 0.0f;                              // player 1
@@ -444,7 +535,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         const bool continuing = A.legato && v.env > 0.05f;    // legato: same bow
         if (!continuing) {
           v.strokeN = 0;
-          v.accent = A.accent;
+          v.accent = A.accent * M.accent;
+          v.swell = M.swell > 0 ? 0.15f : 1.0f;               // swell: start soft
           if (A.alternate) v.dir = -v.dir;                    // up-bow / down-bow
           if (A.glide > 0.0005f || v.env < 0.05f) v.len = v.lenTarget;   // new note: no slide
           v.vibAmt = 0;                                       // vibrato starts later
@@ -468,8 +560,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     bool bowing = v.gate && A.mode == MODE_BOW;
     if (bowing && strokeMax && v.strokeN > strokeMax) bowing = false;
     if (bowing) v.env += (1.0f - v.env) * A.attack;
-    else        v.env -= v.env * 0.00035f;
+    else        v.env -= v.env * (strokeMax ? 0.004f : 0.00035f);   // short strokes lift fast
     v.accent *= A.accentDecay;
+    v.swell += (1.0f - v.swell) * swellK;
 
     // vibrato: own oscillator, fades in ~0.3 s after the note starts and
     // grows with the bow speed
@@ -477,7 +570,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     v.vc -= v.vibK * v.vs;
     const float vibTarget = (s.vibrato && v.gate && A.mode == MODE_BOW) ? v.vibDepth * (0.6f + 0.4f * s.speed) : 0.0f;
     v.vibAmt += (vibTarget - v.vibAmt) * 0.00007f;
-    const float L = v.len * (1.0f + v.vibAmt * v.vs);
+    const float L = v.len * (1.0f + v.vibAmt * v.vs) * (trillUp ? trillRatio : 1.0f);
 
     // bow position splits the string: bridge side beta, nut side 1 - beta
     float beta = s.beta;
@@ -500,8 +593,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     float newVel = 0.0f;
     if (bowing || v.env > 0.001f) {
       // bow speed: direction, articulation accent; tremolo = fast strokes
-      float bv = bowMax * A.speed * v.speedScale * v.env * (1.0f + v.accent) * v.dir;
-      if (s.tremolo) {
+      float bv = bowMax * A.speed * v.speedScale * v.env * v.swell * (1.0f + v.accent) * v.dir;
+      if (trem) {
         v.tremPh += v.tremInc;
         if (v.tremPh >= 1.0f) v.tremPh -= 1.0f;
         float tri = 4.0f * (v.tremPh < 0.5f ? v.tremPh : 1.0f - v.tremPh) - 1.0f;
