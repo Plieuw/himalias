@@ -19,19 +19,20 @@
 //   - A/B button (sample side) .... con sordino (mute)
 //   - A/B button (squares side) ... A = vibrato, B = senza vibrato
 //   - BIT switch .................. tremolo (on the tempo)
-//   - noise side DAC out .......... envelope follower, 0 ... +5 V
+//   - noise side DAC out .......... divisi players only (players 2 ... 6) as strings
+//   - square outputs 1 ... 6 ...... every player's note as a square wave while it sounds
 //   - PA22 (digital noise out) .... 5 ms trigger when the divisi changes
 //
 //  Generative divisi: the Turing register of the former squares sequencer
 //  (clocked by the trigger) chooses which players of the section play and
-//  which chord tone each one takes. The square outputs are silent.
+//  which chord tone each one takes. SAMPLE OUT carries the full ensemble.
 //
 //  Other changes against the factory firmware:
 //   - linker scripts use the full 1 MB flash of the ATSAMD51J20A
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.2.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.3.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -317,9 +318,8 @@ void setup() {
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-  // the square outputs are not used by the strings: park them low
-  PORT->Group[PORTA].OUTCLR.reg = (1ul << 19) | (1ul << 12);
-  PORT->Group[PORTB].OUTCLR.reg = (1ul << 15) | (1ul << 14) | (1ul << 13) | (1ul << 12);
+  // square outputs: square-wave layer of the players; filter caps off
+  PORT->Group[PORTA].DIRCLR.reg = (1ul << 13) | (1ul << 14) | (1ul << 15) | (1ul << 16) | (1ul << 17) | (1ul << 18);
   zt4.enable(true);
 }
 
@@ -375,6 +375,7 @@ volatile uint32_t seq_steps_pending = 0;   // set by the audio interrupt on each
 //   -> 0 V at DAC code ~2210, ~365 codes per volt. Fine tune here if needed.
 #define SEQ_CV_ZERO_CODE   2210.0f
 #define SEQ_CV_CODES_PER_V  365.3f
+#define EURO_5V_CODES      (5.0f * SEQ_CV_CODES_PER_V)   // +-5 V audio = +-1826 codes
 volatile uint16_t seq_cv_code = 2210;
 static float      seq_mel_volts = 0.0f;    // melody above the lowest note (1 V/oct)
 volatile uint32_t seq_trig_ticks = 0;      // > 0: trigger out (PA22) is high
@@ -462,6 +463,28 @@ void renderAudio() {
 
   ++audio_tick;
 
+  // Square outputs: every player also plays its note as a square wave while
+  // it sounds (synth layer that follows the divisi)
+  {
+    static float sq[STR_VOICES];
+    bool hi[STR_VOICES];
+    for(int i = 0; i < STR_VOICES; i++){
+      const StrVoice &v = strings.v[i];
+      const bool on = v.active && (v.gate || v.env > 0.05f);
+      if(on){
+        sq[i] += 2.0f * v.hz * reciprocal_sr;              // phase -1 ... +1
+        if(sq[i] > 1.0f) sq[i] -= 2.0f;
+        hi[i] = sq[i] > 0.0f;
+      } else hi[i] = false;
+    }
+    if(hi[0]) PORT->Group[PORTA].OUTCLR.reg = 1ul << 19; else PORT->Group[PORTA].OUTSET.reg = 1ul << 19;
+    if(hi[1]) PORT->Group[PORTA].OUTCLR.reg = 1ul << 12; else PORT->Group[PORTA].OUTSET.reg = 1ul << 12;
+    if(hi[2]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 15; else PORT->Group[PORTB].OUTSET.reg = 1ul << 15;
+    if(hi[3]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 14; else PORT->Group[PORTB].OUTSET.reg = 1ul << 14;
+    if(hi[4]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 13; else PORT->Group[PORTB].OUTSET.reg = 1ul << 13;
+    if(hi[5]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 12; else PORT->Group[PORTB].OUTSET.reg = 1ul << 12;
+  }
+
   // Forward Button + Trigger to LED
   static bool     previous_trigger = false;
   if (  (PORT->Group[PORTB].IN.reg & (1ul << 16))  &&      // Trigger from Button
@@ -485,18 +508,17 @@ void renderAudio() {
     // Six-voice bowed-string engine; mono sum goes to SAMPLE OUT.
     float out = stringsTick(strings, gate);
 
-    // envelope follower for the noise side DAC out (0 ... +5 V)
-    static float follow = 0.0f;
-    const float a = out < 0 ? -out : out;
-    follow += (a - follow) * (a > follow ? 0.01f : 0.0003f);
 
-    int32_t dl = 2048 + (int32_t)(out * 2047.0f);
+
+    // Eurorack level: +-1 = +-5 V (10 Vpp), centred on the DAC code that
+    // gives 0 V at the jack (output stage from the schematic, see SEQ_CV_*)
+    int32_t dl = (int32_t)(SEQ_CV_ZERO_CODE + out * EURO_5V_CODES);
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
     DAC->DATA[1].reg = (uint16_t)dl;            // SAMPLE OUT
     {
-      int32_t code = (int32_t)(SEQ_CV_ZERO_CODE + follow * 2.0f * 5.0f * SEQ_CV_CODES_PER_V);
-      if(code > 4095) code = 4095;
-      DAC->DATA[0].reg = (uint16_t)code;        // noise side DAC out: envelope
+      int32_t d2 = (int32_t)(SEQ_CV_ZERO_CODE + strings.outDivisi * EURO_5V_CODES);
+      if(d2 < 0) d2 = 0;  if(d2 > 4095) d2 = 4095;
+      DAC->DATA[0].reg = (uint16_t)d2;          // noise side DAC out: divisi players only
     }
 
     // trigger out (PA22, former digital noise out): 5 ms when the divisi changes

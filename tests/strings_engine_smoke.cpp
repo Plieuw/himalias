@@ -120,6 +120,28 @@ int main() {
     }
   }
 
+  // divisi output: silent for a solo, sounding for a section, never louder than the mix
+  {
+    const int ins[2] = { INS_SOLO_VIOLIN, INS_VIOLIN_SECTION };
+    for (int k = 0; k < 2; ++k) {
+      stringsInit(s);
+      s.instrument = (uint8_t)ins[k]; s.layout = LAY_MAJOR; s.rootHz = 261.6f; s.speed = 0.6f;
+      stringsControl(s);
+      double a = 0, b = 0; float p2 = 0;
+      for (unsigned n = 0; n < 50000; ++n) {
+        if ((n & 127) == 0) stringsControl(s);
+        const float y = stringsTick(s, true);
+        const float d = s.outDivisi;
+        if (!std::isfinite(d)) { ++fails; break; }
+        if (n > 20000) { a += (double)y * y; b += (double)d * d; }
+        if (std::fabs(d) > p2) p2 = std::fabs(d);
+      }
+      const double ra = std::sqrt(a / 30000), rb = std::sqrt(b / 30000);
+      if (k == 0 && rb > 0.005) { std::printf("FAIL divisi out not silent for solo: %.3f\n", rb); ++fails; }
+      if (k == 1 && (rb < 0.02 || p2 > 1.0f)) { std::printf("FAIL divisi out section: rms %.3f peak %.3f (mix %.3f)\n", rb, p2, ra); ++fails; }
+    }
+  }
+
   // tempo: gates every 0.5 s -> vibrato 6 Hz, tremolo 12 strokes / s
   stringsInit(s);
   s.instrument = INS_SOLO_VIOLIN; s.rootHz = 440.0f; s.tremolo = true;
@@ -138,6 +160,6 @@ int main() {
 
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, tempo sync)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, tempo sync, divisi output)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

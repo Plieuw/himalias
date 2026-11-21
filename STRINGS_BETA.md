@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.2.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.3.0-beta.uf2`
 
 ## Concept
 
@@ -26,9 +26,19 @@ the former squares sequencer now drive the **generative divisi**.
 | A/B button (sample side) | A = open, B = con sordino (mute: darker, softer, shorter ring) |
 | A/B button (squares side) | A = vibrato, B = senza vibrato |
 | BIT switch | tremolo (on the tempo) |
-| noise side DAC out | envelope follower, 0 ... +5 V |
+| SAMPLE OUT | full ensemble, Eurorack level +-5 V |
+| noise side DAC out | divisi players only (players 2 ... 6) as strings, +-5 V; with SAMPLE OUT usable as a stereo pair |
 | PA22 (digital noise out) | 5 ms trigger when the divisi changes |
-| square outputs | silent (their sequencer drives the divisi) |
+| square outputs 1 ... 6 | each player's note as a square wave while it sounds (synth layer following the divisi) |
+
+## Output level
+
+Both audio outputs are scaled to Eurorack level: digital +-1 = +-5 V
+(10 Vpp), centred on the DAC code that gives 0 V at the jack. The scaling
+comes from the output stage in the preliminary schematic
+(Vout = DAC volts x 3.397 - 6.05 V); if a module differs, adjust
+`SEQ_CV_ZERO_CODE` / `SEQ_CV_CODES_PER_V`. Typical playing peaks at ~+-5 V,
+loud accents are softly limited.
 
 ## Articulations (SQUARES MAIN TUNE, left to right)
 

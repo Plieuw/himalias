@@ -106,6 +106,7 @@ struct StrVoice {
   float accent;                   // stroke accent (decays)
   uint32_t nrng;                  // own noise generator (bow / rosin noise)
   float ringLoss;                 // string loss per round trip once the bow is off
+  float hz;                       // this player's note (for the square outputs)
   uint8_t family;
   bool active, gate, pluck;
 };
@@ -114,7 +115,11 @@ struct StrMode { float a1, a2, g, y1, y2; };
 
 struct StringsEngine {
   StrVoice v[STR_VOICES];
-  StrMode body[STR_FAMILIES][STR_BODY_MODES];
+  StrMode body[STR_FAMILIES][STR_BODY_MODES];      // divisi players (2 ... 6)
+  StrMode bodyLead[STR_FAMILIES][STR_BODY_MODES];  // player 1 (same resonances, own state)
+  float famLpLead[STR_FAMILIES];
+  float outDivisi;                // last sample of the divisi-only output
+  float dc2x, dc2y;
   float bodyDirect[STR_FAMILIES];
   // control (written from loop)
   float rootHz;
@@ -213,6 +218,7 @@ static inline void stringsInit(StringsEngine &s) {
     for (int m = 0; m < STR_BODY_MODES; m++) {
       strMode(s.body[f][m], STR_BODY[f][m][0], STR_BODY[f][m][1], STR_BODY[f][m][2]);
       s.body[f][m].y1 = s.body[f][m].y2 = 0;
+      s.bodyLead[f][m] = s.body[f][m];
     }
     s.bodyDirect[f] = STR_BODY_DIRECT[f];
   }
@@ -244,12 +250,14 @@ static inline void stringsInit(StringsEngine &s) {
     v.strokeN = 0; v.dir = 1.0f; v.accent = 0.0f;
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
     v.ringLoss = 0.99f;
+    v.hz = 220.0f;
     v.family = FAM_VIOLIN;
     v.active = (i == 0); v.gate = false; v.pluck = false;
   }
   s.rootHz = 220.0f; s.speed = 0.5f; s.pressure = 0.5f; s.beta = 0.12f; s.speedCV = 1.0f;
   s.pizz = false; s.vibrato = true; s.tremolo = false; s.mute = false; s.artic = ART_LEGATO;
-  for (int f = 0; f < STR_FAMILIES; f++) { s.famLp[f] = 0; s.famLpK[f] = 0.5f; }
+  for (int f = 0; f < STR_FAMILIES; f++) { s.famLp[f] = 0; s.famLpLead[f] = 0; s.famLpK[f] = 0.5f; }
+  s.outDivisi = 0; s.dc2x = s.dc2y = 0;
   s.bowNoise = 0.0f;
   s.sinceGate = 0; s.clockPeriod = 0; s.lastPeriod = 0; s.vibHz = 0; s.tremHz = 6.5f;
   s.instrument = INS_SOLO_VIOLIN; s.layout = LAY_UNISON; s.maxVoices = STR_VOICES;
@@ -352,6 +360,7 @@ static inline void stringsControl(StringsEngine &s) {
     if (hz > 3500.0f) hz = 3500.0f;
     if (!solo) hz *= v.detune;
     hz *= exp2f(v.drift / 1200.0f);
+    v.hz = hz;
     // loop length minus the delay of the bridge filter and the junction
     float len = STR_SR / hz - strLpDelay(s.bridgeK, hz) - s.lenComp;
     // ring-out after the bow / pluck: the same time for every note
@@ -370,7 +379,7 @@ static inline void stringsControl(StringsEngine &s) {
   if (s.mute) s.level *= 0.75f;
   // which instrument bodies are in use
   uint8_t used = 0;
-  for (int i = 0; i < STR_VOICES; i++) if (s.v[i].active) used |= (uint8_t)(1 << s.v[i].family);
+  for (int i = 1; i < STR_VOICES; i++) if (s.v[i].active) used |= (uint8_t)(1 << s.v[i].family);   // divisi bodies
   s.famUsed = used;
 }
 
@@ -419,7 +428,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   const uint8_t art = s.pizz ? (uint8_t)ART_PIZZICATO : (s.artic < ART_COUNT ? s.artic : 0);
   const StrArticDef &A = STR_ARTIC[art];
   const uint32_t strokeMax = (uint32_t)(A.stroke * STR_SR);
-  float famBus[STR_FAMILIES] = { 0, 0, 0, 0 };
+  float famBus[STR_FAMILIES]  = { 0, 0, 0, 0 };   // divisi players
+  float leadBus = 0.0f;                              // player 1
+  uint8_t leadFam = s.v[0].family;
 
   for (int i = 0; i < STR_VOICES; i++) {
     StrVoice &v = s.v[i];
@@ -526,11 +537,27 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     v.nw = (v.nw + 1) & (STR_NECK_LEN - 1);
     v.bw = (v.bw + 1) & (STR_BRIDGE_LEN - 1);
 
-    famBus[v.family] += bridgeOut * v.gain;                  // force on the bridge
+    if (i == 0) leadBus = bridgeOut * v.gain;               // force on the bridge
+    else        famBus[v.family] += bridgeOut * v.gain;
   }
 
-  // ---- bodies: one per family that is playing
-  float out = 0.0f;
+  // ---- bodies: player 1 through its own body, the divisi players through
+  //      one body per family that is playing. Bodies are linear, so
+  //      full mix = lead + divisi.
+  float lead;
+  {
+    StrMode *m = s.bodyLead[leadFam];
+    float y = leadBus * s.bodyDirect[leadFam];
+    for (int k = 0; k < STR_BODY_MODES; k++) {
+      const float yy = m[k].a1 * m[k].y1 - m[k].a2 * m[k].y2 + m[k].g * leadBus;
+      m[k].y2 = m[k].y1;
+      m[k].y1 = yy;
+      y += yy;
+    }
+    s.famLpLead[leadFam] += (y - s.famLpLead[leadFam]) * s.famLpK[leadFam];
+    lead = s.famLpLead[leadFam];
+  }
+  float div = 0.0f;
   for (int f = 0; f < STR_FAMILIES; f++) {
     StrMode *m = s.body[f];
     // skip bodies nobody plays on, once they have rung out
@@ -547,14 +574,22 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       y += yy;
     }
     s.famLp[f] += (y - s.famLp[f]) * s.famLpK[f];            // top end roll-off
-    out += s.famLp[f];
+    div += s.famLp[f];
   }
-  out *= s.level;
+  lead *= s.level;
+  div  *= s.level;
 
-  // dc blocker + soft limit
+  // divisi-only output (second DAC): dc blocker + soft limit
+  s.dc2y = div - s.dc2x + 0.9995f * s.dc2y;
+  s.dc2x = div;
+  float o2 = strClamp(s.dc2y * 1.4f, -1.5f, 1.5f);
+  s.outDivisi = o2 - o2 * o2 * o2 * (1.0f / 6.75f);
+
+  // full mix (SAMPLE OUT)
+  const float out = lead + div;
   s.dcy = out - s.dcx + 0.9995f * s.dcy;
   s.dcx = out;
-  float o = s.dcy * 1.2f;
+  float o = s.dcy * 1.4f;
   o = strClamp(o, -1.5f, 1.5f);
   return o - o * o * o * (1.0f / 6.75f);                    // smooth clip, max +-1
 }
@@ -567,9 +602,14 @@ static inline void stringsClear(StringsEngine &s) {
     for (int k = 0; k < STR_BRIDGE_LEN; k++) v.bridge[k] = 0;
     v.lp = v.env = v.vibAmt = 0; v.gate = false; v.pluck = false;
   }
-  for (int f = 0; f < STR_FAMILIES; f++)
-    for (int m = 0; m < STR_BODY_MODES; m++) s.body[f][m].y1 = s.body[f][m].y2 = 0;
-  s.dcx = s.dcy = 0;
+  for (int f = 0; f < STR_FAMILIES; f++) {
+    for (int m = 0; m < STR_BODY_MODES; m++) {
+      s.body[f][m].y1 = s.body[f][m].y2 = 0;
+      s.bodyLead[f][m].y1 = s.bodyLead[f][m].y2 = 0;
+    }
+    s.famLp[f] = s.famLpLead[f] = 0;
+  }
+  s.dcx = s.dcy = 0; s.dc2x = s.dc2y = 0; s.outDivisi = 0;
   s.gatePrev = false;
 }
 
