@@ -12,8 +12,9 @@
 //                                   divisi major, divisi minor, cluster
 //   - SAMPLE SELECT knob + CV ..... bow pressure
 //   - CLOCK RATE knob ............. bow speed
-//   - CV IN RATE jack ............. bow speed CV (expression); when patched the
-//                                   bow also plays without a gate (swells)
+//   - CV IN RATE jack ............. dynamic gate / bow CV: the level (0 ... 8 V)
+//                                   is how hard the bow plays (speed, pressure,
+//                                   accent, scratch, vibrato); also a gate
 //   - SQUARES MAIN TUNE knob + CV . articulation: legato, detache, martele,
 //                                   staccato, spiccato, sul tasto, sul ponticello,
 //                                   col legno, flageolet, pizzicato, portamento
@@ -35,7 +36,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.5.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.6.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -574,16 +575,23 @@ void loop() {
   uint16_t bow_speed_adc = adc51.readAnalog(PB02,ADC_Channel14,false);
   uint16_t bow_cv_adc    = adc51.readAnalog(PB01,ADC_Channel13,false);
   strings.speed = (float)bow_speed_adc * (1.0f / 4095.0f);
-  if(bow_cv_adc < SYNC_UNPATCHED){                       // patched: 0 ... +5 V
-    float c = cvVolts(bow_cv_adc) * 0.2f;
+  // CV IN RATE = dynamic gate / bow CV: the level is how hard the bow plays
+  // (0 ... 8 V = soft ... full, up to 10 V a bit more). Above ~0.4 V it is
+  // also a gate: plays notes, steps the divisi and gives the tempo.
+  if(bow_cv_adc < SYNC_UNPATCHED){
+    float c = cvVolts(bow_cv_adc) * (1.0f / 8.0f);
     if(c < 0.0f) c = 0.0f;
-    if(c > 1.2f) c = 1.2f;
+    if(c > 1.25f) c = 1.25f;
     static float cs = 0.0f;
-    cs += (c - cs) * 0.2f;
-    strings.speedCV = cs;
-    strings_cv_bow = cs > 0.05f;                         // the CV alone can bow
+    cs += (c - cs) * 0.3f;
+    strings.speedCV  = cs;
+    strings.velocity = cs;                               // sampled per note by the engine
+    const bool was = strings_cv_bow;
+    strings_cv_bow = strings_cv_bow ? (cs > 0.03f) : (cs > 0.05f);   // with hysteresis
+    if(strings_cv_bow && !was) seq_steps_pending++;      // a dynamic gate also steps the divisi
   } else {
-    strings.speedCV = 1.0f;
+    strings.speedCV  = 1.0f;
+    strings.velocity = 1.0f;
     strings_cv_bow = false;
   }
 

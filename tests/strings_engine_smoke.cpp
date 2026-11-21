@@ -145,6 +145,24 @@ int main() {
     }
   }
 
+  // dynamic gate: a higher velocity must play louder
+  {
+    double prev = 0;
+    const float vels[3] = { 0.3f, 0.7f, 1.2f };
+    for (int k = 0; k < 3; ++k) {
+      stringsInit(s);
+      s.instrument = MDL_SOLO_VIOLIN; s.artic = ART_DETACHE; s.rootHz = 392.0f; s.speed = 0.7f;
+      s.velocity = vels[k]; s.speedCV = vels[k];
+      stringsControl(s);
+      if (!render(true, 20000, x)) { ++fails; continue; }
+      const double r = rms(x, 4000, 20000);
+      // louder with every step (the top end is softly limited, so the last
+      // step only has to be a little louder)
+      if (k > 0 && r <= prev * (k == 2 ? 1.02 : 1.2)) { std::printf("FAIL velocity %.1f not louder (%.3f vs %.3f)\n", vels[k], r, prev); ++fails; }
+      prev = r;
+    }
+  }
+
   // tempo: gates every 0.5 s -> vibrato 6 Hz, tremolo 12 strokes / s
   stringsInit(s);
   s.instrument = INS_SOLO_VIOLIN; s.rootHz = 440.0f; s.tremolo = true;
@@ -163,6 +181,6 @@ int main() {
 
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, tempo sync, divisi output)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, tempo sync, divisi output, velocity)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

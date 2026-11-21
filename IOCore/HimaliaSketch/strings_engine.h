@@ -164,6 +164,8 @@ struct StrVoice {
   float tran;                     // noise transient envelope
   float tranHp;                   // highpass state for the radiated transient
   float tremPrev;                 // previous tremolo stroke sign
+  float vel;                      // this note's velocity (from the dynamic gate)
+  float prevB;                    // previous bridge output (brightness tilt)
   uint32_t nrng;                  // own noise generator (bow / rosin noise)
   float ringLoss;                 // string loss per round trip once the bow is off
   float hz;                       // this player's note (for the square outputs)
@@ -208,6 +210,7 @@ struct StringsEngine {
   float famLpK[STR_FAMILIES];
   float bowNoise;                 // rosin noise amount
   float transient;                // noise transient amount (1 = normal)
+  float velocity;                 // dynamic gate level (1 = normal), sampled per note
   // tempo from the gates: vibrato and tremolo lock to it
   uint32_t sinceGate;             // samples since the last gate start
   uint32_t clockPeriod;           // samples per gate (0 = no steady clock)
@@ -327,7 +330,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.gain = 1.0f;
     v.onset = 0; v.pluckN = v.pluckLen = 0; v.pluckAmp = 0.5f;
     v.strokeN = 0; v.dir = 1.0f; v.accent = 0.0f; v.swell = 1.0f;
-    v.tran = 0.0f; v.tranHp = 0.0f; v.tremPrev = 1.0f;
+    v.tran = 0.0f; v.tranHp = 0.0f; v.tremPrev = 1.0f; v.vel = 1.0f; v.prevB = 0.0f;
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
     v.ringLoss = 0.99f;
     v.hz = 220.0f;
@@ -340,6 +343,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.outDivisi = 0; s.dc2x = s.dc2y = 0;
   s.bowNoise = 0.0f;
   s.transient = 1.0f;
+  s.velocity = 1.0f;
   s.sinceGate = 0; s.clockPeriod = 0; s.lastPeriod = 0; s.vibHz = 0; s.tremHz = 6.5f;
   s.instrument = MDL_SOLO_VIOLIN; s.layout = LAY_UNISON; s.maxVoices = STR_VOICES;
   s.trillPh = 0; s.trillInc = 9.0f / STR_SR;
@@ -559,17 +563,21 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         if (continuing) v.tran += 0.15f;                      // finger / bow change noise
         if (!continuing) {
           v.strokeN = 0;
-          v.accent = A.accent * M.accent;
+          v.vel = strClamp(s.velocity, 0.0f, 1.3f);             // dynamic gate: how hard this note
+          v.accent = A.accent * M.accent * (0.4f + 0.6f * v.vel);
           v.swell = M.swell > 0 ? 0.15f : 1.0f;               // swell: start soft
           // noise transient: scratch / snap / click, a bit different every time
           v.tran = STR_ARTIC_SCRATCH[s.articEff < ART_COUNT ? s.articEff : 0]
-                 * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) * (0.6f + 0.6f * s.pressure);
+                 * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) * (0.6f + 0.6f * s.pressure)
+                 * (0.3f + 0.7f * v.vel);
           if (A.alternate) v.dir = -v.dir;                    // up-bow / down-bow
           if (A.glide > 0.0005f || v.env < 0.05f) v.len = v.lenTarget;   // new note: no slide
           v.vibAmt = 0;                                       // vibrato starts later
           if (A.mode == MODE_PLUCK) {                         // pizzicato
             v.pluck = true; v.pluckN = 0;
-            v.pluckLen = (uint32_t)(v.len * 0.25f) + 2; v.pluckAmp = 0.5f;
+            // harder pluck = shorter, brighter finger contact
+            v.pluckLen = (uint32_t)(v.len * 0.25f * (1.35f - 0.55f * strClamp(s.velocity, 0.0f, 1.3f))) + 2;
+            v.pluckAmp = 0.5f;
           } else if (A.mode == MODE_STRIKE) {                 // col legno: wood tap
             v.pluck = true; v.pluckN = 0;
             v.pluckLen = 12; v.pluckAmp = 1.2f;
@@ -595,7 +603,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // grows with the bow speed
     v.vs += v.vibK * v.vc;
     v.vc -= v.vibK * v.vs;
-    const float vibTarget = (s.vibrato && v.gate && A.mode == MODE_BOW) ? v.vibDepth * (0.6f + 0.4f * s.speed) : 0.0f;
+    const float vibTarget = (s.vibrato && v.gate && A.mode == MODE_BOW)
+                          ? v.vibDepth * (0.6f + 0.4f * s.speed) * (0.75f + 0.25f * v.vel) : 0.0f;
     v.vibAmt += (vibTarget - v.vibAmt) * 0.00007f;
     const float L = v.len * (1.0f + v.vibAmt * v.vs) * (trillUp ? trillRatio : 1.0f);
 
@@ -637,7 +646,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // friction: stick while the velocity difference is small, slip above.
       // The accent bites in with extra pressure (martele).
       const float dv = bv - stringVel + nz * s.bowNoise * (bv < 0 ? -bv : bv);
-      float sl = s.slope + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite;
+      float sl = s.slope + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite - 1.2f * (v.vel - 1.0f);
       if (sl < 0.6f) sl = 0.6f;
       float t = dv * sl + 0.001f;
       t = (t < 0 ? -t : t) + 0.75f;
@@ -649,7 +658,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     if (v.pluck) {                                           // pizzicato / col legno pulse
       if (v.pluckN < v.pluckLen) {
         const float x = (float)v.pluckN / (float)v.pluckLen;
-        newVel += v.pluckAmp * (1.0f - x) * (x < 0.15f ? x / 0.15f : 1.0f);
+        newVel += v.pluckAmp * (0.3f + 0.7f * v.vel) * (1.0f - x) * (x < 0.15f ? x / 0.15f : 1.0f);
         v.pluckN++;
       } else v.pluck = false;
     }
@@ -671,7 +680,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // radiated transient: highpassed so it is a scratch, not a thump
     const float trHp = tr - v.tranHp;
     v.tranHp += (tr - v.tranHp) * 0.15f;
-    const float radiated = bridgeOut + trHp * 0.10f;
+    // louder notes sound brighter: tilt the radiated sound with the velocity
+    const float tilt = 0.8f * (v.vel - 0.7f);
+    const float radiated = bridgeOut + (bridgeOut - v.prevB) * tilt + trHp * 0.10f;
+    v.prevB = bridgeOut;
     if (i == 0) leadBus = radiated * v.gain;                 // force on the bridge
     else        famBus[v.family] += radiated * v.gain;
   }

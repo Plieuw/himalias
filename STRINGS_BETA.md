@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.5.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.6.0-beta.uf2`
 
 ## Concept
 
@@ -20,7 +20,7 @@ the former squares sequencer now drive the **generative divisi**.
 | SPREAD knob + CV | layout: unison, octaves, fifths, major, minor, divisi major, divisi minor, cluster |
 | SAMPLE SELECT knob + CV | bow pressure |
 | CLOCK RATE knob | bow speed |
-| CV IN RATE jack | bow speed CV (0 ... +5 V). When patched, the CV alone can bow (swells without a gate) |
+| CV IN RATE jack | **dynamic gate** / bow CV, 0 ... 8 V (up to 10 V a bit more): the level is how hard the bow plays. Above ~0.4 V it is also a gate (plays notes, steps the divisi, gives the tempo). A slow CV here makes swells |
 | SQUARES MAIN TUNE knob + CV | articulation (11 steps, see below); the CV can sequence articulations |
 | TRIGGER in / button | gate: bow / pluck / strike; steps the divisi register; the time between gates is the tempo |
 | A/B button (sample side) | A = open, B = con sordino (mute: darker, softer, shorter ring) |
@@ -30,6 +30,16 @@ the former squares sequencer now drive the **generative divisi**.
 | noise side DAC out | divisi players only (players 2 ... 6) as strings, +-5 V; with SAMPLE OUT usable as a stereo pair |
 | PA22 (digital noise out) | 5 ms trigger when the divisi changes |
 | square outputs 1 ... 6 | each player's note as a square wave while it sounds (synth layer following the divisi) |
+
+## Dynamic gates
+
+The TRIGGER input only knows on / off. For velocity, patch a dynamic gate
+(gate whose height is the velocity) into CV IN RATE. Per note the level sets:
+bow speed (loudness, continuously, so a falling gate also fades), bow
+pressure (harder = grittier), accent, scratch amount, vibrato depth,
+pizzicato strength and finger hardness, and the brightness of the radiated
+sound. Measured: velocity 0.3 -> 1.25 is about +7 dB and brighter; the top
+end is softly limited.
 
 ## Output level
 

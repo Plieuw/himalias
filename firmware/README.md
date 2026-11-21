@@ -8,4 +8,4 @@ open the USB serial port at 1200 baud) and copy one .uf2 to the HIMALIA drive.
 - `Himalia_samples.uf2`    - original sample player, with the fixes
 - `../Himalia_BODFIX.uf2`  - factory firmware
 - `Himalia_QSPI_test.uf2`        - test only: checks the 16 MB QSPI flash chip, report on the USB serial port (115200 baud)
-- `Himalia_strings_v1.5.0-beta.uf2` - bowed strings, 14 models, noise transients, 11 articulations, tempo sync, divisi outputs, Eurorack level (branch himalia-strings-beta), see STRINGS_BETA.md
+- `Himalia_strings_v1.6.0-beta.uf2` - bowed strings, 14 models, noise transients, dynamic gates, 11 articulations, tempo sync, divisi outputs, Eurorack level (branch himalia-strings-beta), see STRINGS_BETA.md
