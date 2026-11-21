@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.8.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.9.0-beta.uf2`
 
 ## Concept
 
@@ -165,9 +165,24 @@ Per player:
 - loop delay compensated for the bridge filter: intonation within a few cents;
 - pizzicato pluck, tremolo bow strokes, bow attack/release envelope.
 
-Per family (violin, viola, cello, bass): a modal **body** (6 resonances:
-air / wood modes and the bridge hill) driven by the bridge force, plus the
-direct string sound. Bodies nobody plays on are skipped.
+Per family (violin, viola, cello, bass): the **body** (v1.9) is
+- the three lowest resonances (air A0, wood B1-, B1+) as IIR resonators,
+  because they ring longer than an IR would hold;
+- plus an **impulse response** (1024 taps, 21.5 ms) for everything above:
+  direct sound, bridge hill and a dense field of ~210-250 body modes (denser
+  and more damped up high, random strengths and signs), which gives the
+  irregular peaks and dips of a measured body. The IRs are synthesised by
+  `tools/make_body_ir.py` (seeds chosen for an even note-to-note level,
+  level-matched to the old modal body; per note within ~+-2 dB of it).
+- Convolution: uniform partitioned FFT (128-sample blocks, 8 partitions,
+  own radix-2 FFT); lead and divisi are packed into one complex FFT. The
+  divisi output uses the blend of the families that play divisi (energy
+  kept). It runs in a low-priority interrupt every 128 samples, together
+  with the output stage: **5.4 ms latency** on both audio outputs.
+- **Air**: like a mix engineer's air shelf. The body filters the top octave
+  away, so the air band (4th-order highpass at 9.5 kHz: bow hair, rosin,
+  top harmonics) is taken from the strings themselves and added after the
+  body, about +4 ... +9 dB at 12-20 kHz (`STR_AIR_DEFAULT`, less with mute).
 
 Ensemble humanisation, per player: static intonation (+-6 cents) plus slow
 drift (+-4 cents), own vibrato phase, rate (when not synced) and depth that
@@ -188,8 +203,13 @@ depth per family (violin 5.6 Hz +-17 c ... cello 5.0 Hz +-21 c).
   release goes silent.
 - Measured on the host: intonation 0 ... +9 cents across the range; bow
   position changes brightness (ponticello bright, tasto dark).
-- Firmware builds: 32 KB flash, 82 KB RAM.
-- **CPU load**: estimated ~80-85% of the time per sample with six players.
+- Body IR convolution checked against direct convolution (exact) in the
+  host test.
+- Firmware builds: 59 KB flash, 153 KB RAM.
+- **CPU load**: estimated ~80-85% of the time per sample with six players
+  before v1.9; the IR body adds ~10-15% (host measurement), so in sections
+  the guard may run 5 instead of 6 players. The guard counts the body too
+  and also drops a player when a body block comes too late (`body late`).
   CPU guard: when the audio interrupt takes more than 90% of the time per
   sample, the firmware drops a player (down to 3) and brings it back after
   ~2 s with room to spare. The serial monitor (115200 baud) prints the worst

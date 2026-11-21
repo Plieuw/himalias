@@ -36,7 +36,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.8.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.9.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -218,6 +218,16 @@ void TC4_Handler(){
   Adafruit_ZeroTimer::timerHandler(4);
 }
 
+// Body (low modes + IR convolution + output stage) runs every 128 samples in
+// a low-priority interrupt: the unused AES vector, triggered by software.
+// The audio interrupt (TC4) can interrupt it; loop() runs below it.
+volatile uint32_t body_cycles = 0;          // cycles of the last body block
+void AES_Handler(){
+  const uint32_t c0 = DWT->CYCCNT;
+  stringsBody(strings);
+  body_cycles = DWT->CYCCNT - c0;
+}
+
 /*
 Adafruit_FlashTransport_QSPI flashTransport(PIN_QSPI_SCK, PIN_QSPI_CS, PIN_QSPI_IO0, PIN_QSPI_IO1, PIN_QSPI_IO2, PIN_QSPI_IO3);
 Adafruit_SPIFlash flash(&flashTransport);
@@ -317,7 +327,12 @@ void setup() {
 
   seqStep(0, false);   // start the squares with a defined pattern
   stringsInit(strings);
+  strings.conv.deferred = true;              // the body runs in AES_Handler
   stringsControl(strings);
+  NVIC_SetPriority(TC4_IRQn, 0);             // audio first
+  NVIC_SetPriority(AES_IRQn, (1 << __NVIC_PRIO_BITS) - 1);   // body below it, above loop()
+  NVIC_ClearPendingIRQ(AES_IRQn);
+  NVIC_EnableIRQ(AES_IRQn);
   // cycle counter for the CPU load report on the serial monitor
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CYCCNT = 0;
@@ -511,6 +526,7 @@ void renderAudio() {
   {
     // Six-voice bowed-string engine; mono sum goes to SAMPLE OUT.
     float out = stringsTick(strings, gate);
+    if(strings.conv.ready) NVIC_SetPendingIRQ(AES_IRQn);   // a block for the body
 
 
 
@@ -536,16 +552,21 @@ void renderAudio() {
   }
 
   const uint32_t isr_dt = DWT->CYCCNT - isr_c0;
-  if(isr_dt > isr_cycles_max) isr_cycles_max = isr_dt;
+  if(isr_dt + body_cycles / STR_IR_BLOCK > isr_cycles_max) isr_cycles_max = isr_dt + body_cycles / STR_IR_BLOCK;
   // CPU guard: close to the time per sample -> drop a player (min 3);
   // after ~2 s with room to spare, bring one back
   {
     static uint32_t calm = 0;
     const uint32_t budget = (uint32_t)(F_CPU / samplerate);
-    if(isr_dt > budget * 9 / 10){
+    static uint16_t seenOverruns = 0;
+    // the body block costs body_cycles every 128 samples
+    const uint32_t load = isr_dt + body_cycles / STR_IR_BLOCK;
+    const bool late = strings.conv.overruns != seenOverruns;
+    seenOverruns = strings.conv.overruns;
+    if(load > budget * 9 / 10 || late){
       if(strings.maxVoices > 3) strings.maxVoices--;
       calm = 0;
-    } else if(isr_dt < budget * 7 / 10){
+    } else if(load < budget * 7 / 10){
       if(++calm > 95000 && strings.maxVoices < STR_VOICES){ strings.maxVoices++; calm = 0; }
     } else calm = 0;
   }
@@ -673,6 +694,7 @@ void loop() {
     // worst audio interrupt in the last half second, as % of the time per sample
     const uint32_t mx = isr_cycles_max;
     isr_cycles_max = 0;
+    Serial.print("  body late "); Serial.print(strings.conv.overruns);
     Serial.print("  cpu ");     Serial.print(100.0f * (float)mx / (F_CPU / samplerate), 0);
     Serial.print("%  players max "); Serial.println(strings.maxVoices);
   }
