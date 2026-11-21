@@ -1,6 +1,7 @@
 name: Strings DSP host test
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - himalia-strings-beta
