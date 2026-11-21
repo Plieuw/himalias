@@ -28,6 +28,7 @@
 #define STR_SR 47619.0f
 #endif
 
+#define STR_BEAT_TARGET (60.0f / 128.0f)   // preferred beat: the tempo lands nearest 128 BPM
 #define STR_ONSETS 33       // gate starts kept for the rhythm analysis (32 intervals)
 #define STR_VOICES     6
 #define STR_NECK_LEN   2048          // nut side segment (lowest note ~ 23 Hz)
@@ -382,7 +383,7 @@ static inline float strLpDelay(float k, float f) {
 //  1. pulse: the largest grid that all intervals are whole multiples of
 //  2. pattern: the shortest repeating group of intervals (and accents)
 //  3. beat: the accent spacing when the accents are regular, otherwise the
-//     division of the pattern nearest 120 bpm (or a pulse multiple)
+//     division of the pattern nearest 128 bpm (or a pulse multiple)
 static inline void stringsTempo(StringsEngine &s) {
   if (s.onCount == s.onSeen) return;
   s.onSeen = s.onCount;
@@ -472,22 +473,22 @@ static inline void stringsTempo(StringsEngine &s) {
       if (i < ni) pos += u[i];
     }
     if (regular && cnt >= 2 && sp > 0) {
-      // the accents mark the grid; the beat is the division of it nearest 120 bpm
+      // the accents mark the grid; the beat is the division of it nearest 128 bpm
       float d = 1e9f;
       for (int b = 1; b <= sp; b++) {
         if (sp % b) continue;
-        const float e = fabsf(logf(b * best / (0.5f * STR_SR)));
+        const float e = fabsf(logf(b * best / (STR_BEAT_TARGET * STR_SR)));
         if (e < d) { d = e; beat = b; }
       }
     }
   }
   if (!beat) {
-    // divisions of the pattern (or 1, 2, 4, 8 pulses) nearest 0.5 s
+    // divisions of the pattern (or 1, 2, 4, 8 pulses) nearest 128 BPM
     float d = 1e9f;
     const int span = bar ? bar : 8;
     for (int b = 1; b <= span; b++) {
       if (bar ? (bar % b) != 0 : (b & (b - 1)) != 0) continue;
-      const float e = fabsf(logf(b * best / (0.5f * STR_SR)));
+      const float e = fabsf(logf(b * best / (STR_BEAT_TARGET * STR_SR)));
       if (e < d) { d = e; beat = b; }
     }
   }

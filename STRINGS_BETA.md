@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.7.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.7.1-beta.uf2`
 
 ## Concept
 
@@ -86,8 +86,8 @@ its time and velocity; the last 32 intervals are analysed:
 2. **pattern**: the shortest repeating group of intervals and accents
    (up to 16 notes), i.e. one bar of the ostinato;
 3. **beat**: with a dynamic gate, regular accents mark the grid and the beat
-   is its division nearest 120 BPM; otherwise the division of the pattern
-   nearest 120 BPM. Half / double tempo is possible and harmless (vibrato and
+   is its division nearest 128 BPM; otherwise the division of the pattern
+   nearest 128 BPM. Half / double tempo is possible and harmless (vibrato and
    tremolo pick subdivisions anyway).
 
 A change of tempo is picked up after two notes off the grid; a jump of the
