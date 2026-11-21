@@ -287,7 +287,7 @@ void setup() {
   pinMode(PA22,OUTPUT); // PWM OUT
 
   pinMode(PB01,INPUT_PULLUP); // SQR1
-  pinMode(PA20,INPUT_PULLUP); // A/B: violin / cello
+  // PA20 A/B is read through PORTA input register; no PA20 Arduino alias in this variant.
   pinMode(PA21,INPUT_PULLUP); // squares scale selector
   pinMode(PB17,INPUT_PULLUP); // BIT: bow gate
   pinMode(PB16,INPUT_PULLUP); // Manual Trigger
@@ -473,7 +473,7 @@ void renderAudio() {
 
   ++audio_tick;
 
-remove external excitation ISR  // SuperSQUARE Ramps generate binary pattern
+// SuperSQUARE ramps generate the binary pattern.
   bool sqr_pins[6];
   bool flt_pins[6];
   for(int i = 0 ; i < 6 ; i++){
