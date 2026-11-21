@@ -166,7 +166,7 @@ static inline void stringsControl(StringsEngine &s, float rootHz,
   s.voiceCount = ensemble ? STR_VOICES : 1;
   s.bowSpeed = strClamp(bowSpeed, 0.02f, 1.0f);
   s.bowPressure = strClamp(bowPressure, 0.02f, 1.0f);
-  s.vibratoDepth = strClamp(vibratoDepth, 0.0f, 0.035f);
+  s.vibratoDepth = strClamp(vibratoDepth, 0.0f, 0.006f);
   s.vibratoRate = strClamp(vibratoRate, 3.0f, 9.0f);
 
   for (int i = 0; i < STR_VOICES; ++i) {
@@ -200,7 +200,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     StringVoice &v = s.voice[i];
     if (!v.active) continue;
 
-    float rp = (float)v.write - v.delayLength;
+    const float voiceVib = sinf(6.28318530718f * (s.vibratoPhase + (float)i * 0.13f)) * s.vibratoDepth;\n    const float modulatedLength = v.delayLength * exp2f(-voiceVib * 1.44269504f);\n    float rp = (float)v.write - modulatedLength;
     if (rp < 0.0f) rp += STR_DELAY_SIZE;
     const uint32_t i0 = ((uint32_t)rp) & (STR_DELAY_SIZE - 1);
     const uint32_t i1 = (i0 + 1) & (STR_DELAY_SIZE - 1);
@@ -241,7 +241,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   }
   const float dry = mix * 0.35f;
   const float out = dry + bodyOut * 0.18f;
-  return strSoftClip(out * s.outputLevel * (1.0f + vib * 0.15f));
+  return strSoftClip(out * s.outputLevel);
 }
 
 // Clear delay/body state when changing instrument or patch mode.
