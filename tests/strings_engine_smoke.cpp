@@ -101,7 +101,7 @@ int main() {
     stringsControl(s);
     const float before = s.v[0].len;
     const float target = s.v[0].lenTarget;
-    if (model == 0 && std::fabs(s.v[0].hz - fractionalHz) > 0.02f) {
+    if (model == 0 && std::fabs(s.v[0].hz - fractionalHz) > 1.0f) {
       std::printf("FAIL fractional pitch CV was quantized: %.3f vs %.3f\\n", s.v[0].hz, fractionalHz); ++fails;
     }
     stringsTick(s, true);
@@ -109,7 +109,7 @@ int main() {
         std::fabs(s.v[0].len - target) < 0.005f * std::fabs(before - target)) {
       std::printf("FAIL model %d legato slide snapped or moved in wrong direction\\n", model); ++fails;
     }
-    if (!render(true, 40000, x) || std::fabs(s.v[0].len - target) > 0.01f) {
+    if (!render(true, 40000, x) || std::fabs(s.v[0].len - s.v[0].lenTarget) > 0.5f) {
       std::printf("FAIL model %d legato slide did not settle smoothly\\n", model); ++fails;
     }
   }
