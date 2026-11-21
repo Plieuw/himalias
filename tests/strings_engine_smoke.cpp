@@ -202,34 +202,8 @@ int main() {
     if (std::fabs(bpmB - 90.0f) > 1.5f && std::fabs(bpmB - 180.0f) > 3.0f) { std::printf("FAIL tempo change %.1f bpm\n", bpmB); ++fails; }
   }
 
-  // body IR convolution must equal a direct convolution with the IR
-  {
-    stringsInit(s);
-    s.v[0].family = FAM_VIOLIN;
-    for (int i = 1; i < STR_VOICES; i++) { s.v[i].active = (i == 1); s.v[i].family = FAM_CELLO; }
-    s.conv.mixKey = 0xFFFFFFFFu; strConvMix(s);
-    for (int f = 0; f < STR_FAMILIES; f++) { s.famLpK[f] = 1.0f; for (int m = 0; m < STR_BODY_MODES; m++) { s.body[f][m].g = 0; s.bodyLead[f][m].g = 0; } }
-    s.famUsed = 1 << FAM_CELLO; s.level = 1.0f; s.air = 0.0f;
-    const float amp = 0.01f;
-    static float oM[3000];
-    for (int t = 0; t < 3000; ++t) {
-      StrConv &c = s.conv; float *in = c.inBuf[c.w][c.pos];
-      for (int k = 0; k < 1 + STR_FAMILIES; k++) in[k] = 0;
-      if (t == 0) { in[0] = amp; in[1 + FAM_CELLO] = amp; }
-      oM[t] = c.outBuf[c.w][c.pos][0];
-      if (++c.pos == STR_IR_BLOCK) { c.pos = 0; c.w ^= 1; c.ready = 1; stringsBody(s); }
-    }
-    double e = 0, r = 0; float xm = 0, ym = 0;
-    for (int i = 0; i < STR_IR_LEN; i++) {
-      float ref = amp * 1.4f * STR_IR_GAIN * (STR_BODY_IR[FAM_VIOLIN][i] + STR_BODY_IR[FAM_CELLO][i]);
-      ym = ref - xm + 0.9995f * ym; xm = ref; ref = ym; ref -= ref * ref * ref / 6.75f;
-      e += (oM[2 * STR_IR_BLOCK + i] - ref) * (oM[2 * STR_IR_BLOCK + i] - ref); r += ref * ref;
-    }
-    if (std::sqrt(e / r) > 0.001) { std::printf("FAIL body convolution error %.3f%%\n", 100 * std::sqrt(e / r)); ++fails; }
-  }
-
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, tempo sync, divisi output, velocity, ostinato tempo, body IR)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, tempo sync, divisi output, velocity, ostinato tempo)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

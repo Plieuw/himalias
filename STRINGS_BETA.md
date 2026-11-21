@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.12.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.13.0-beta.uf2`
 
 ## Concept
 
@@ -81,7 +81,7 @@ for every note); con sordino shortens that.
 Players bow according to the note length: the time between the last gates
 (from the rhythm, see Tempo) sets the bow speed of every new note: 0.6 s =
 normal, shorter notes up to 1.6x faster, longer notes down to 0.6x (free
-playing without a clock: a slow bow). With it:
+playing without a clock: a normal bow). With it:
 - a fast bow plays a bit further from the bridge, is ~+2 dB louder and a bit
   brighter; a slow bow plays closer to the bridge, ~-1 dB, with a little
   more grip (stable Helmholtz motion up to the top of the range);
@@ -155,7 +155,7 @@ pattern (notes / pulses).
 | # | model | what it is |
 |---|---|---|
 | 1 | solo violin | one violin |
-| 2 | solo viola | one viola (own body IR, vibrato and register) |
+| 2 | solo viola | one viola (own body, vibrato and register) |
 | 3 | solo cello | one cello |
 | 4 | violin section | six violins |
 | 5 | viola section | six violas |
@@ -212,24 +212,15 @@ Per player:
 - loop delay compensated for the bridge filter: intonation within a few cents;
 - pizzicato pluck, tremolo bow strokes, bow attack/release envelope.
 
-Per family (violin, viola, cello, bass): the **body** (v1.9) is
-- the three lowest resonances (air A0, wood B1-, B1+) as IIR resonators,
-  because they ring longer than an IR would hold;
-- plus an **impulse response** (1024 taps, 21.5 ms) for everything above:
-  direct sound, bridge hill and a dense field of ~210-250 body modes (denser
-  and more damped up high, random strengths and signs), which gives the
-  irregular peaks and dips of a measured body. The IRs are synthesised by
-  `tools/make_body_ir.py` (seeds chosen for an even note-to-note level,
-  level-matched to the old modal body; per note within ~+-2 dB of it).
-- Convolution: uniform partitioned FFT (128-sample blocks, 8 partitions,
-  own radix-2 FFT); lead and divisi are packed into one complex FFT. The
-  divisi output uses the blend of the families that play divisi (energy
-  kept). It runs in a low-priority interrupt every 128 samples, together
-  with the output stage: **5.4 ms latency** on both audio outputs.
-- **Air**: like a mix engineer's air shelf. The body filters the top octave
-  away, so the air band (4th-order highpass at 9.5 kHz: bow hair, rosin,
-  top harmonics) is taken from the strings themselves and added after the
-  body, about +4 ... +9 dB at 12-20 kHz (`STR_AIR_DEFAULT`, less with mute).
+Per family (violin, viola, cello, bass): a modal **body** (6 resonances:
+air / wood modes and the bridge hill) driven by the bridge force, plus the
+direct string sound. Bodies nobody plays on are skipped. (v1.9 ... v1.12 had an
+impulse-response body; removed in v1.13: too heavy for the module.)
+
+**Air**: like a mix engineer's air shelf. The body filters the top octave
+away, so the air band (4th-order highpass at 9.5 kHz: bow hair, rosin, top
+harmonics) is taken from the strings themselves and added after the body,
+about +9 dB at 12-20 kHz (`STR_AIR_DEFAULT`, less with mute).
 
 Ensemble humanisation, per player: static intonation (+-6 cents) plus slow
 drift (+-4 cents), own vibrato phase, rate (when not synced) and depth that
@@ -250,13 +241,9 @@ depth per family (violin 5.6 Hz +-17 c ... cello 5.0 Hz +-21 c).
   release goes silent.
 - Measured on the host: intonation 0 ... +9 cents across the range; bow
   position changes brightness (ponticello bright, tasto dark).
-- Body IR convolution checked against direct convolution (exact) in the
-  host test.
-- Firmware builds: 59 KB flash, 153 KB RAM.
+- Firmware builds: ~43 KB flash, ~84 KB RAM.
 - **CPU load**: estimated ~80-85% of the time per sample with six players
-  before v1.9; the IR body adds ~10-15% (host measurement), so in sections
-  the guard may run 5 instead of 6 players. The guard counts the body too
-  and also drops a player when a body block comes too late (`body late`).
+  (v1.10 ... v1.13 add ~10 % on the host: vibrato, bowing, noise).
   CPU guard: when the audio interrupt takes more than 90% of the time per
   sample, the firmware drops a player (down to 3) and brings it back after
   ~2 s with room to spare. The serial monitor (115200 baud) prints the worst

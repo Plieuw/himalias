@@ -22,7 +22,6 @@
 //
 #pragma once
 #include <math.h>
-#include "strings_body_ir.h"
 #include <stdint.h>
 
 #ifndef STR_SR
@@ -36,13 +35,6 @@
 #define STR_BRIDGE_LEN 512           // bridge side segment (bow position <= 0.3)
 #define STR_FAMILIES   4
 #define STR_BODY_MODES 6
-#define STR_LOW_MODES 3        // A0, B1-, B1+ stay IIR resonators (they ring longer than the IR)
-// body IR convolution: uniform partitioned (overlap-save), 1024 taps = 21.5 ms
-#define STR_IR_LEN   1024
-#define STR_IR_BLOCK 128
-#define STR_IR_FFT   256
-#define STR_IR_PARTS (STR_IR_LEN / STR_IR_BLOCK)
-#define STR_IR_BINS  (STR_IR_FFT / 2 + 1)
 #ifndef STR_OVR_GRIP
 #define STR_OVR_GRIP 1.0f      // overpressure: bow speed boost on the driven period
 #define STR_OVR_FREE 0.85f     // ... and cut on the others (octave down)
@@ -53,7 +45,6 @@
 #ifndef STR_SL_MIN
 #define STR_SL_MIN 0.6f
 #endif
-#define STR_IR_GAIN  0.95f   // average level as the old modal body
 #define STR_AIR_DEFAULT 0.5f    // air band level (0 = none)
 
 enum StrFamily     : uint8_t { FAM_VIOLIN = 0, FAM_VIOLA, FAM_CELLO, FAM_BASS };
@@ -232,33 +223,12 @@ struct StrVoice {
 
 struct StrMode { float a1, a2, g, y1, y2; };
 
-// The body runs block-wise (128 samples): the audio interrupt only writes the
-// player buses and reads the finished output, stringsBody() does the body
-// (low IIR modes + IR convolution) and the output stage. On the module it
-// runs in a low-priority interrupt; latency 2 blocks (5.4 ms).
-struct StrConv {
-  float inBuf[2][STR_IR_BLOCK][1 + STR_FAMILIES];   // lead bus, family buses
-  float outBuf[2][STR_IR_BLOCK][2];                 // full mix, divisi
-  float prev[STR_IR_BLOCK][2];                      // previous IR input block (lead, divisi)
-  float fdl[STR_IR_PARTS][2][STR_IR_BINS * 2];      // input spectra history
-  float H[STR_FAMILIES][STR_IR_PARTS][STR_IR_BINS * 2];   // IR spectra per family
-  float Hdiv[STR_IR_PARTS][STR_IR_BINS * 2];        // divisi output: blend of the families playing
-  float buf[STR_IR_FFT * 2];
-  float lowOut[STR_IR_BLOCK][2];
-  float cosT[STR_IR_FFT / 2], sinT[STR_IR_FFT / 2];
-  uint8_t rev[STR_IR_FFT];
-  uint16_t pos;                   // sample in the current block
-  uint8_t w;                      // block the interrupt writes / reads
-  volatile uint8_t ready;         // a full block waits for stringsBody()
-  uint8_t head;                   // newest spectrum in fdl
-  volatile uint16_t overruns;     // body too late (glitch)
-  bool deferred;                  // true: the firmware calls stringsBody() itself
-  uint32_t mixKey;                // which families the Hdiv blend is made of
-  // "air": the top octave a mix engineer would lift with a high shelf. The
-  // body filters it away, so it is taken from the strings themselves (bow
-  // hair, rosin, top harmonics): 2nd order highpass, mixed in after the body
-  float ab0, ab1, ab2, aa1, aa2;
-  float az[2][2][2];              // highpass states (lead / divisi, stage 1 / 2)
+// "air": the top octave a mix engineer would lift with a high shelf. The
+// body filters it away, so it is taken from the strings themselves (bow hair,
+// rosin, top harmonics): 4th order highpass at 9.5 kHz, added after the body
+struct StrAir {
+  float b0, b1, b2, a1, a2;
+  float z[2][2][2];               // states (lead / divisi, stage 1 / 2)
 };
 
 struct StringsEngine {
@@ -269,7 +239,7 @@ struct StringsEngine {
   float outDivisi;                // last sample of the divisi-only output
   float dc2x, dc2y;
   float bodyDirect[STR_FAMILIES];
-  StrConv conv;
+  StrAir airF;
   // control (written from loop)
   float rootHz;
   float speed;                    // bow speed 0 ... 1
@@ -321,9 +291,6 @@ struct StringsEngine {
   uint8_t famUsed;                // bodies with players
   uint32_t rng;
 };
-
-static inline void strConvInit(StringsEngine &s);
-static inline void strConvMix(StringsEngine &s);
 
 // ------------------------------------------------------------------ helpers
 static inline float strRand(StringsEngine &s) {            // -1 ... 1
@@ -460,7 +427,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.transient = 1.0f;
   s.air = STR_AIR_DEFAULT;
   s.velocity = 1.0f;
-  s.noteDur = 1.2f;
+  s.noteDur = 0.6f;                 // free playing: a normal bow
   s.sinceGate = (uint32_t)(5.0f * STR_SR); s.clockPeriod = 0;   // the first gate counts too
   s.now = 0; s.onW = 0; s.onN = 0; s.onCount = 0; s.onSeen = 0;
   s.pulse = 0; s.patLen = 0; s.patPulses = 0; s.beatCand = 0; s.vibHz = 0; s.tremHz = 6.5f;
@@ -468,7 +435,14 @@ static inline void stringsInit(StringsEngine &s) {
   s.trillPh = 0; s.trillInc = 9.0f / STR_SR; s.trillPrev = false;
   s.model = STR_MODELS[0]; s.articEff = ART_LEGATO;
   s.divisiMask = 0x3F;
-  strConvInit(s);
+  {                                                         // air band: 4th order highpass 9.5 kHz
+    StrAir &a = s.airF;
+    const float w = 6.2831853f * 9500.0f / STR_SR, al = sinf(w) / (2.0f * 0.707f), cw = cosf(w);
+    const float a0 = 1.0f + al;
+    a.b0 = (1.0f + cw) * 0.5f / a0; a.b1 = -(1.0f + cw) / a0; a.b2 = a.b0;
+    a.a1 = -2.0f * cw / a0; a.a2 = (1.0f - al) / a0;
+    for (int ch = 0; ch < 2; ch++) for (int st = 0; st < 2; st++) a.z[ch][st][0] = a.z[ch][st][1] = 0.0f;
+  }
   for (int i = 0; i < STR_VOICES; i++) s.divisiTone[i] = 0;
   s.gatePrev = false;
   s.slope = 3.0f; s.loss = 0.95f; s.bridgeK = 0.7f; s.lenComp = 0.0f;
@@ -760,7 +734,6 @@ static inline void stringsControl(StringsEngine &s) {
   for (int i = 1; i < STR_VOICES; i++) if (s.v[i].active) used |= (uint8_t)(1 << s.v[i].family);   // divisi bodies
   s.famUsed = used;
   s.model = M;
-  strConvMix(s);                                           // divisi body IR blend
 }
 
 // ------------------------------------------------------------------ audio (interrupt)
@@ -774,193 +747,15 @@ static inline __attribute__((always_inline)) float strRead(const float *buf, uin
   return buf[i0] + (buf[i1] - buf[i0]) * fr;
 }
 
-// ------------------------------------------------------------------ body IR convolution
-// complex radix-2 FFT, N = 256, in place on interleaved re / im
-static inline void strFFT(StrConv &c, float *x, bool inverse) {
-  const int N = STR_IR_FFT;
-  for (int i = 0; i < N; i++) {
-    const int j = c.rev[i];
-    if (j > i) {
-      float t = x[2 * i]; x[2 * i] = x[2 * j]; x[2 * j] = t;
-      t = x[2 * i + 1]; x[2 * i + 1] = x[2 * j + 1]; x[2 * j + 1] = t;
-    }
+static inline float strAirHp(StrAir &a, int ch, float x) {
+  for (int st = 0; st < 2; st++) {
+    float *z = a.z[ch][st];
+    const float y = a.b0 * x + z[0];
+    z[0] = a.b1 * x - a.a1 * y + z[1];
+    z[1] = a.b2 * x - a.a2 * y;
+    x = y;
   }
-  const float sg = inverse ? 1.0f : -1.0f;
-  for (int len = 2; len <= N; len <<= 1) {
-    const int half = len >> 1, step = N / len;
-    for (int i = 0; i < N; i += len) {
-      for (int k = 0; k < half; k++) {
-        const float wr = c.cosT[k * step], wi = sg * c.sinT[k * step];
-        float *a = x + 2 * (i + k), *b = x + 2 * (i + k + half);
-        const float tr = b[0] * wr - b[1] * wi, ti = b[0] * wi + b[1] * wr;
-        b[0] = a[0] - tr; b[1] = a[1] - ti;
-        a[0] += tr;       a[1] += ti;
-      }
-    }
-  }
-  if (inverse) { const float sc = 1.0f / N; for (int i = 0; i < 2 * N; i++) x[i] *= sc; }
-}
-
-static inline void strConvInit(StringsEngine &s) {
-  StrConv &c = s.conv;
-  const int N = STR_IR_FFT;
-  for (int k = 0; k < N / 2; k++) { c.cosT[k] = cosf(6.2831853f * k / N); c.sinT[k] = sinf(6.2831853f * k / N); }
-  for (int i = 0; i < N; i++) { int r = 0; for (int b = 0; b < 8; b++) if (i & (1 << b)) r |= 1 << (7 - b); c.rev[i] = (uint8_t)r; }
-  // IR partitions -> spectra (each partition zero padded to the FFT size)
-  for (int f = 0; f < STR_FAMILIES; f++)
-    for (int p = 0; p < STR_IR_PARTS; p++) {
-      for (int i = 0; i < 2 * N; i++) c.buf[i] = 0.0f;
-      for (int i = 0; i < STR_IR_BLOCK; i++) c.buf[2 * i] = STR_BODY_IR[f][p * STR_IR_BLOCK + i] * STR_IR_GAIN;
-      strFFT(c, c.buf, false);
-      for (int k = 0; k < STR_IR_BINS * 2; k++) c.H[f][p][k] = c.buf[k];
-    }
-  for (int p = 0; p < STR_IR_PARTS; p++) for (int k = 0; k < STR_IR_BINS * 2; k++) c.Hdiv[p][k] = c.H[0][p][k];
-  c.mixKey = 0xFFFFFFFFu;
-  {                                                         // air band: 4th order highpass 9.5 kHz
-    const float w = 6.2831853f * 9500.0f / STR_SR, al = sinf(w) / (2.0f * 0.707f), cw = cosf(w);
-    const float a0 = 1.0f + al;
-    c.ab0 = (1.0f + cw) * 0.5f / a0; c.ab1 = -(1.0f + cw) / a0; c.ab2 = c.ab0;
-    c.aa1 = -2.0f * cw / a0; c.aa2 = (1.0f - al) / a0;
-    for (int ch = 0; ch < 2; ch++) for (int st = 0; st < 2; st++) c.az[ch][st][0] = c.az[ch][st][1] = 0.0f;
-  }
-  for (int b = 0; b < 2; b++) for (int i = 0; i < STR_IR_BLOCK; i++) {
-    for (int k = 0; k < 1 + STR_FAMILIES; k++) c.inBuf[b][i][k] = 0.0f;
-    c.outBuf[b][i][0] = c.outBuf[b][i][1] = 0.0f;
-  }
-  for (int i = 0; i < STR_IR_BLOCK; i++) c.prev[i][0] = c.prev[i][1] = 0.0f;
-  for (int p = 0; p < STR_IR_PARTS; p++) for (int k = 0; k < STR_IR_BINS * 2; k++) c.fdl[p][0][k] = c.fdl[p][1][k] = 0.0f;
-  c.pos = 0; c.w = 0; c.ready = 0; c.head = 0; c.overruns = 0; c.deferred = false;
-}
-
-// the divisi output gets one IR: the blend of the families that play divisi
-static inline void strConvMix(StringsEngine &s) {
-  StrConv &c = s.conv;
-  uint8_t cnt[STR_FAMILIES] = { 0, 0, 0, 0 };
-  for (int i = 1; i < STR_VOICES; i++) if (s.v[i].active) cnt[s.v[i].family]++;
-  const uint32_t key = cnt[0] | (cnt[1] << 8) | (cnt[2] << 16) | ((uint32_t)cnt[3] << 24);
-  if (key == c.mixKey) return;
-  c.mixKey = key;
-  int tot = cnt[0] + cnt[1] + cnt[2] + cnt[3];
-  if (!tot) { cnt[s.v[0].family] = 1; tot = 1; }
-  // the families' dense modes are unrelated, so a plain average would lose
-  // level: scale the blend to the average energy of the families
-  float eMix = 0.0f, eFam = 0.0f;
-  for (int p = 0; p < STR_IR_PARTS; p++)
-    for (int k = 0; k < STR_IR_BINS * 2; k++) {
-      float h = 0.0f;
-      for (int f = 0; f < STR_FAMILIES; f++) if (cnt[f]) {
-        h += c.H[f][p][k] * (float)cnt[f];
-        eFam += c.H[f][p][k] * c.H[f][p][k] * (float)cnt[f] / (float)tot;
-      }
-      h /= (float)tot;
-      c.Hdiv[p][k] = h;
-      eMix += h * h;
-    }
-  const float g = eMix > 0.0f ? sqrtf(eFam / eMix) : 1.0f;
-  for (int p = 0; p < STR_IR_PARTS; p++) for (int k = 0; k < STR_IR_BINS * 2; k++) c.Hdiv[p][k] *= g;
-}
-
-static inline float strLowModes(StrMode *m, float x) {
-  float y = 0.0f;
-  for (int k = 0; k < STR_LOW_MODES; k++) {
-    const float yy = m[k].a1 * m[k].y1 - m[k].a2 * m[k].y2 + m[k].g * x;
-    m[k].y2 = m[k].y1; m[k].y1 = yy; y += yy;
-  }
-  return y;
-}
-
-// one block: low body modes, IR convolution (lead and divisi packed as one
-// complex signal), output stage. Called when s.conv.ready is set.
-static inline void stringsBody(StringsEngine &s) {
-  StrConv &c = s.conv;
-  if (!c.ready) return;
-  const int b = c.w ^ 1;                                    // the block that is full
-  const uint8_t lf = s.v[0].family;
-  const int N = STR_IR_FFT, B = STR_IR_BLOCK;
-  const float air = s.air * (s.mute ? 0.25f : 1.0f);
-  // 1. low modes (IIR) and the top-end filter in front of the IR
-  for (int n = 0; n < B; n++) {
-    const float *x = c.inBuf[b][n];
-    float yl = strLowModes(s.bodyLead[lf], x[0]);
-    s.famLpLead[lf] += (x[0] - s.famLpLead[lf]) * s.famLpK[lf];
-    float yd = 0.0f, dIn = 0.0f;
-    for (int f = 0; f < STR_FAMILIES; f++) {
-      StrMode *m = s.body[f];
-      if (!((s.famUsed >> f) & 1)) {
-        const float e = m[0].y1 * m[0].y1 + m[1].y1 * m[1].y1 + m[2].y1 * m[2].y1 + s.famLp[f] * s.famLp[f];
-        if (e < 1e-12f) continue;
-      }
-      yd += strLowModes(m, x[1 + f]);
-      s.famLp[f] += (x[1 + f] - s.famLp[f]) * s.famLpK[f];
-      dIn += s.famLp[f];
-    }
-    // air: top octave of the raw strings (transposed direct form II)
-    float sumD = 0.0f;
-    for (int f = 0; f < STR_FAMILIES; f++) sumD += x[1 + f];
-    const float ain[2] = { x[0], sumD };
-    for (int ch = 0; ch < 2; ch++) {
-      float y = ain[ch];
-      for (int st = 0; st < 2; st++) {
-        float *z = c.az[ch][st];
-        const float xin = y;
-        y = c.ab0 * xin + z[0];
-        z[0] = c.ab1 * xin - c.aa1 * y + z[1];
-        z[1] = c.ab2 * xin - c.aa2 * y;
-      }
-      if (ch == 0) yl += y * air; else yd += y * air;
-    }
-    c.lowOut[n][0] = yl; c.lowOut[n][1] = yd;
-    // FFT frame: [previous block, this block], lead = real, divisi = imaginary
-    c.buf[2 * n] = c.prev[n][0];          c.buf[2 * n + 1] = c.prev[n][1];
-    c.buf[2 * (B + n)] = s.famLpLead[lf]; c.buf[2 * (B + n) + 1] = dIn;
-    c.prev[n][0] = s.famLpLead[lf];       c.prev[n][1] = dIn;
-  }
-  // 2. spectrum of the frame, split into the lead and divisi spectra
-  strFFT(c, c.buf, false);
-  c.head = (uint8_t)((c.head + 1) % STR_IR_PARTS);
-  float *XL = c.fdl[c.head][0], *XD = c.fdl[c.head][1];
-  for (int k = 0; k < STR_IR_BINS; k++) {
-    const int kn = (N - k) & (N - 1);
-    const float a = c.buf[2 * k], bb = c.buf[2 * k + 1];
-    const float cr = c.buf[2 * kn], ci = -c.buf[2 * kn + 1];   // conj(Z[N-k])
-    XL[2 * k] = 0.5f * (a + cr);  XL[2 * k + 1] = 0.5f * (bb + ci);
-    XD[2 * k] = 0.5f * (bb - ci); XD[2 * k + 1] = -0.5f * (a - cr);
-  }
-  // 3. multiply with the IR partitions and sum, pack lead + j divisi again
-  const float *HL = &c.H[lf][0][0];
-  for (int k = 0; k < STR_IR_BINS; k++) {
-    float lr = 0, li = 0, dr = 0, di = 0;
-    int h = c.head;
-    for (int p = 0; p < STR_IR_PARTS; p++) {
-      const float *xl = &c.fdl[h][0][2 * k], *xd = &c.fdl[h][1][2 * k];
-      const float *hl = HL + p * STR_IR_BINS * 2 + 2 * k, *hd = &c.Hdiv[p][2 * k];
-      lr += xl[0] * hl[0] - xl[1] * hl[1]; li += xl[0] * hl[1] + xl[1] * hl[0];
-      dr += xd[0] * hd[0] - xd[1] * hd[1]; di += xd[0] * hd[1] + xd[1] * hd[0];
-      h = h ? h - 1 : STR_IR_PARTS - 1;
-    }
-    c.buf[2 * k] = lr - di; c.buf[2 * k + 1] = li + dr;                 // L + jD
-    if (k > 0 && k < N / 2) {
-      const int kn = N - k;
-      c.buf[2 * kn] = lr + di; c.buf[2 * kn + 1] = dr - li;             // conj(L) + j conj(D)
-    }
-  }
-  strFFT(c, c.buf, true);
-  // 4. output stage: level, dc blockers, soft limits
-  const float lev = s.level;
-  for (int n = 0; n < B; n++) {
-    const float lead = (c.lowOut[n][0] + c.buf[2 * (B + n)]) * lev;
-    const float div  = (c.lowOut[n][1] + c.buf[2 * (B + n) + 1]) * lev;
-    s.dc2y = div - s.dc2x + 0.9995f * s.dc2y;
-    s.dc2x = div;
-    float o2 = strClamp(s.dc2y * 1.4f, -1.5f, 1.5f);
-    c.outBuf[b][n][1] = o2 - o2 * o2 * o2 * (1.0f / 6.75f);
-    const float out = lead + div;
-    s.dcy = out - s.dcx + 0.9995f * s.dcy;
-    s.dcx = out;
-    float o = strClamp(s.dcy * 1.4f, -1.5f, 1.5f);
-    c.outBuf[b][n][0] = o - o * o * o * (1.0f / 6.75f);   // smooth clip, max +-1
-  }
-  c.ready = 0;
+  return x;
 }
 
 // gate: bow on (arco) / pluck on the rising edge (pizzicato)
@@ -988,8 +783,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   if (s.sinceGate < 0xFFFFFFF0u) s.sinceGate++;
   if (gate && !s.gatePrev && s.sinceGate > (uint32_t)(0.03f * STR_SR)) {   // ignore bounces < 30 ms
     if (s.sinceGate > (uint32_t)(3.0f * STR_SR)) s.onN = 0;               // long pause: new rhythm
-    // note length for the bowing: the last interval; free playing = slow bow
-    s.noteDur = s.sinceGate < (uint32_t)(3.0f * STR_SR) ? (float)s.sinceGate / STR_SR : 1.2f;
+    // note length for the bowing: the last interval; free playing = normal bow
+    s.noteDur = s.sinceGate < (uint32_t)(3.0f * STR_SR) ? (float)s.sinceGate / STR_SR : 0.6f;
     s.sinceGate = 0;
     s.onT[s.onW] = s.now; s.onV[s.onW] = s.velocity;
     s.onW = (uint8_t)((s.onW + 1) % STR_ONSETS);
@@ -1275,23 +1070,62 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     else        famBus[v.family] += radiated * v.gain * v.bowGain * ovrGain;
   }
 
-  // ---- body + output stage run block-wise in stringsBody(): hand over the
-  //      buses, take the finished sample (2 blocks later)
-  (void)leadFam;
-  StrConv &c = s.conv;
-  float *in = c.inBuf[c.w][c.pos];
-  in[0] = leadBus;
-  for (int f = 0; f < STR_FAMILIES; f++) in[1 + f] = famBus[f];
-  const float out = c.outBuf[c.w][c.pos][0];
-  s.outDivisi = c.outBuf[c.w][c.pos][1];
-  if (++c.pos == STR_IR_BLOCK) {
-    c.pos = 0;
-    c.w ^= 1;
-    if (c.ready) c.overruns++;
-    c.ready = 1;
-    if (!c.deferred) stringsBody(s);
+  // ---- bodies: player 1 through its own body, the divisi players through
+  //      one body per family that is playing. Bodies are linear, so
+  //      full mix = lead + divisi.
+  float lead;
+  {
+    StrMode *m = s.bodyLead[leadFam];
+    float y = leadBus * s.bodyDirect[leadFam];
+    for (int k = 0; k < STR_BODY_MODES; k++) {
+      const float yy = m[k].a1 * m[k].y1 - m[k].a2 * m[k].y2 + m[k].g * leadBus;
+      m[k].y2 = m[k].y1;
+      m[k].y1 = yy;
+      y += yy;
+    }
+    s.famLpLead[leadFam] += (y - s.famLpLead[leadFam]) * s.famLpK[leadFam];
+    lead = s.famLpLead[leadFam];
   }
-  return out;
+  float div = 0.0f, divIn = 0.0f;
+  for (int f = 0; f < STR_FAMILIES; f++) {
+    StrMode *m = s.body[f];
+    const float x = famBus[f];
+    divIn += x;
+    // skip bodies nobody plays on, once they have rung out
+    if (!((s.famUsed >> f) & 1)) {
+      const float e = m[0].y1 * m[0].y1 + m[1].y1 * m[1].y1 + m[2].y1 * m[2].y1;
+      if (e < 1e-12f) continue;
+    }
+    float y = x * s.bodyDirect[f];
+    for (int k = 0; k < STR_BODY_MODES; k++) {
+      const float yy = m[k].a1 * m[k].y1 - m[k].a2 * m[k].y2 + m[k].g * x;
+      m[k].y2 = m[k].y1;
+      m[k].y1 = yy;
+      y += yy;
+    }
+    s.famLp[f] += (y - s.famLp[f]) * s.famLpK[f];            // top end roll-off
+    div += s.famLp[f];
+  }
+  // air: the top octave of the raw strings on top of the bodies
+  const float air = s.air * (s.mute ? 0.25f : 1.0f);
+  lead += strAirHp(s.airF, 0, leadBus) * air;
+  div  += strAirHp(s.airF, 1, divIn) * air;
+  lead *= s.level;
+  div  *= s.level;
+
+  // divisi-only output (second DAC): dc blocker + soft limit
+  s.dc2y = div - s.dc2x + 0.9995f * s.dc2y;
+  s.dc2x = div;
+  float o2 = strClamp(s.dc2y * 1.4f, -1.5f, 1.5f);
+  s.outDivisi = o2 - o2 * o2 * o2 * (1.0f / 6.75f);
+
+  // full mix (SAMPLE OUT)
+  const float out = lead + div;
+  s.dcy = out - s.dcx + 0.9995f * s.dcy;
+  s.dcx = out;
+  float o = s.dcy * 1.4f;
+  o = strClamp(o, -1.5f, 1.5f);
+  return o - o * o * o * (1.0f / 6.75f);                    // smooth clip, max +-1
 }
 
 // clear all string and body states (instrument change)
@@ -1311,9 +1145,6 @@ static inline void stringsClear(StringsEngine &s) {
   }
   s.dcx = s.dcy = 0; s.dc2x = s.dc2y = 0; s.outDivisi = 0;
   s.gatePrev = false;
-  StrConv &c = s.conv;                                       // body convolution history
-  for (int p = 0; p < STR_IR_PARTS; p++) for (int k = 0; k < STR_IR_BINS * 2; k++) c.fdl[p][0][k] = c.fdl[p][1][k] = 0.0f;
-  for (int i = 0; i < STR_IR_BLOCK; i++) c.prev[i][0] = c.prev[i][1] = 0.0f;
 }
 
 // generative divisi: the Turing register picks who plays and which chord tone
