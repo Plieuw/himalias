@@ -11,11 +11,14 @@
 //   - CLOCK RATE knob ............. bow speed
 //   - CV IN RATE jack ............. bow speed CV (expression); when patched the
 //                                   bow also plays without a gate (swells)
-//   - SQUARES MAIN TUNE knob + CV . bow position: sul tasto (left) ... sul ponticello
-//   - TRIGGER in / button ......... gate: bow while high, pluck in pizzicato
-//   - A/B button (sample side) .... arco / pizzicato
+//   - SQUARES MAIN TUNE knob + CV . articulation: legato, detache, martele,
+//                                   staccato, spiccato, sul tasto, sul ponticello,
+//                                   col legno, flageolet, pizzicato, portamento
+//   - TRIGGER in / button ......... gate: bow / pluck / strike; the time between
+//                                   gates is the tempo for vibrato and tremolo
+//   - A/B button (sample side) .... con sordino (mute)
 //   - A/B button (squares side) ... A = vibrato, B = senza vibrato
-//   - BIT switch .................. tremolo
+//   - BIT switch .................. tremolo (on the tempo)
 //   - noise side DAC out .......... envelope follower, 0 ... +5 V
 //   - PA22 (digital noise out) .... 5 ms trigger when the divisi changes
 //
@@ -28,7 +31,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.1.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.2.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -508,6 +511,18 @@ void renderAudio() {
 
   const uint32_t isr_dt = DWT->CYCCNT - isr_c0;
   if(isr_dt > isr_cycles_max) isr_cycles_max = isr_dt;
+  // CPU guard: close to the time per sample -> drop a player (min 3);
+  // after ~2 s with room to spare, bring one back
+  {
+    static uint32_t calm = 0;
+    const uint32_t budget = (uint32_t)(F_CPU / samplerate);
+    if(isr_dt > budget * 9 / 10){
+      if(strings.maxVoices > 3) strings.maxVoices--;
+      calm = 0;
+    } else if(isr_dt < budget * 7 / 10){
+      if(++calm > 95000 && strings.maxVoices < STR_VOICES){ strings.maxVoices++; calm = 0; }
+    } else calm = 0;
+  }
 }
 
 
@@ -560,19 +575,16 @@ void loop() {
   if(hz > 3500.0f) hz = 3500.0f;
   strings.rootHz = hz;
 
-  // ---- bow position: SQUARES MAIN TUNE knob + CV
-  //      left = sul tasto (0.30), middle ~ normal (0.11), right = sul ponticello (0.04)
-  uint16_t pos_poti = adc51.readAnalog(PB03,ADC_Channel15,false);
-  uint16_t pos_jack = adc51.readAnalog(PB04,ADC_Channel6,true);
-  uint16_t pos_sum = pos_poti;
-  if(pos_jack <= 4000) pos_sum += pos_jack;
-  if(pos_sum > 4000) pos_sum = 4000;
-  {
-    const float k = (float)pos_sum * (1.0f / 4000.0f);
-    static float b = 0.11f;
-    b += ((0.30f * powf(0.04f / 0.30f, k)) - b) * 0.1f;
-    strings.beta = b;
-  }
+  // ---- articulation: SQUARES MAIN TUNE knob + CV (11 steps, CV can sequence them)
+  //      legato, detache, martele, staccato, spiccato, sul tasto, sul ponticello,
+  //      col legno, flageolet, pizzicato, portamento
+  uint16_t art_poti = adc51.readAnalog(PB03,ADC_Channel15,false);
+  uint16_t art_jack = adc51.readAnalog(PB04,ADC_Channel6,true);
+  uint16_t art_sum = art_poti;
+  if(art_jack <= 4000) art_sum += art_jack;
+  if(art_sum > 4000) art_sum = 4000;
+  static uint16_t art_state = 0;
+  strings.artic = (uint8_t)selectHyst(art_sum, 150, 3900, ART_COUNT - 1, art_state);
 
   // ---- bow pressure: SAMPLE SELECT knob + CV
   uint16_t cv_sample_select_adc = adc51.readAnalog(PB09,ADC_Channel3,false);
@@ -585,8 +597,8 @@ void loop() {
   pr_s += (pr - pr_s) * 0.1f;
   strings.pressure = pr_s;
 
-  // ---- buttons: A/B sample = arco / pizzicato, A/B squares = vibrato
-  strings.pizz    = !(PORT->Group[PORTA].IN.reg & (1ul << 20));
+  // ---- buttons: A/B sample = con sordino (mute), A/B squares = vibrato
+  strings.mute    = !(PORT->Group[PORTA].IN.reg & (1ul << 20));
   strings.vibrato =  (PORT->Group[PORTA].IN.reg & (1ul << 21)) != 0;
 
   // ---- instrument (RATCHET) and layout (SPREAD), with hysteresis
@@ -621,12 +633,13 @@ void loop() {
     Serial.print("  layout ");  Serial.print(strings.layout);
     Serial.print("  speed ");   Serial.print(strings.speed, 2);
     Serial.print("  press ");   Serial.print(strings.pressure, 2);
-    Serial.print("  pos ");     Serial.print(strings.beta, 3);
+    Serial.print("  artic ");   Serial.print(strings.artic);
+    Serial.print("  bpm ");     Serial.print(strings.clockPeriod ? 60.0f * samplerate / (float)strings.clockPeriod : 0.0f, 1);
     Serial.print("  divisi ");  Serial.print(strings.divisiMask, BIN);
     // worst audio interrupt in the last half second, as % of the time per sample
     const uint32_t mx = isr_cycles_max;
     isr_cycles_max = 0;
     Serial.print("  cpu ");     Serial.print(100.0f * (float)mx / (F_CPU / samplerate), 0);
-    Serial.println("%");
+    Serial.print("%  players max "); Serial.println(strings.maxVoices);
   }
 }

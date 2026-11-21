@@ -106,8 +106,38 @@ int main() {
   render(true, 30000, x);
   if (!render(false, 120000, x) || rms(x, 100000, 120000) > 0.005) { std::printf("FAIL release\n"); ++fails; }
 
+  // every articulation on solo violin and cello section: finite, bounded, sounding
+  for (int art = 0; art < ART_COUNT; ++art) {
+    for (int ins = 0; ins < 2; ++ins) {
+      stringsInit(s);
+      s.instrument = ins ? INS_CELLO_SECTION : INS_SOLO_VIOLIN; s.artic = (uint8_t)art;
+      s.rootHz = ins ? 130.8f : 440.0f; s.speed = 0.6f; s.pressure = 0.6f;
+      stringsControl(s);
+      if (!render(true, 12000, x)) { std::printf("FAIL artic %d: not finite\n", art); ++fails; continue; }
+      const double r = rms(x, 0, 12000);
+      const float p = peak(x);
+      if (r < 0.01 || p > 1.0f) { std::printf("FAIL artic %d ins %d: rms %.3f peak %.3f\n", art, ins, r, p); ++fails; }
+    }
+  }
+
+  // tempo: gates every 0.5 s -> vibrato 6 Hz, tremolo 12 strokes / s
+  stringsInit(s);
+  s.instrument = INS_SOLO_VIOLIN; s.rootHz = 440.0f; s.tremolo = true;
+  stringsControl(s);
+  {
+    const unsigned P = (unsigned)(0.5f * STR_SR);
+    for (unsigned n = 0; n < 4 * P; ++n) {
+      if ((n & 127) == 0) stringsControl(s);
+      stringsTick(s, (n % P) < P * 9 / 10);
+    }
+    stringsControl(s);
+    if (std::fabs(s.vibHz - 6.0f) > 0.05f || std::fabs(s.tremHz - 6.0f) > 0.05f) {
+      std::printf("FAIL tempo sync: vibrato %.2f Hz, tremolo %.2f Hz\n", s.vibHz, s.tremHz); ++fails;
+    }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
-  std::printf("strings DSP test passed (%d instruments x %d layouts, intonation, pizzicato, tremolo, release)\n",
-              (int)INS_COUNT, (int)LAY_COUNT);
+  std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
+              "pizzicato, tremolo, release, tempo sync)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }
