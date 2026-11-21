@@ -95,13 +95,13 @@ struct StrArticDef {
 
 static const StrArticDef STR_ARTIC[ART_COUNT] = {
   //  mode        beta  press speed attack   accent decay     bite stroke glide    ring(s) st alt  leg
-  { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0015f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.0007f, 0.60f, 0, false, true  },  // legato
+  { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0015f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00045f,0.60f, 0, false, true  },  // legato: ~47 ms finger travel
   { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0030f, 0.35f,0.9993f,  0.3f, 0.0f,  0.0030f, 0.60f, 0, true,  false },  // detache
   { MODE_BOW,    0.10f, 1.1f, 1.0f, 0.0060f, 1.0f, 0.99965f, 1.0f, 0.0f,  0.0030f, 0.70f, 0, true,  false },  // martele / marcato
   { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0050f, 0.5f, 0.9993f,  0.5f, 0.12f, 0.0030f, 0.40f, 0, true,  false },  // staccato
   { MODE_BOW,    0.13f, 0.6f, 1.2f, 0.0080f, 0.6f, 0.9985f,  0.2f, 0.05f, 0.0030f, 0.30f, 0, true,  false },  // spiccato
-  { MODE_BOW,    0.28f, 0.5f, 0.8f, 0.0008f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.0007f, 0.60f, 0, false, true  },  // sul tasto / flautando
-  { MODE_BOW,    0.035f,1.1f, 1.0f, 0.0015f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.0007f, 0.60f, 0, false, true  },  // sul ponticello
+  { MODE_BOW,    0.28f, 0.5f, 0.8f, 0.0008f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00045f,0.60f, 0, false, true  },  // sul tasto / flautando
+  { MODE_BOW,    0.035f,1.1f, 1.0f, 0.0015f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00045f,0.60f, 0, false, true  },  // sul ponticello
   { MODE_STRIKE, 0.11f, 1.0f, 1.0f, 0.0f,    0.0f, 0.9990f,  0.0f, 0.0f,  0.0030f, 0.12f, 0, false, false },  // col legno battuto
   { MODE_BOW,    0.08f, 0.35f,0.9f, 0.0010f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.0007f, 1.00f, 12, false, true },  // flageolet (harmonics)
   { MODE_PLUCK,  0.11f, 1.0f, 1.0f, 0.0f,    0.0f, 0.9990f,  0.0f, 0.0f,  0.0030f, 1.20f, 0, false, false },  // pizzicato
@@ -1104,7 +1104,11 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     const bool resting = !v.gate && v.relStop && v.relN < (uint32_t)(0.5f * STR_SR);
     if (bowing || v.env > 0.001f || resting) {
       // bow speed: direction, articulation accent; tremolo = fast strokes
-      float bv = bowMax * A.speed * v.speedScale * v.env * v.swell * (1.0f + v.accent) * v.dir * v.bowMul;
+      // Up- and down-bow are not identical: a slight speed/pressure bias
+      // gives each stroke a different bite without changing its pitch or timing.
+      const float bowDirection = (v.dir > 0.0f) ? 1.025f : 0.975f;
+      float bv = bowMax * A.speed * v.speedScale * v.env * v.swell * (1.0f + v.accent)
+               * v.dir * v.bowMul * bowDirection;
       // long notes: when the bow runs out the player changes bow: slows down,
       // turns (scratch) and speeds up again, ~90 ms. Every player has their
       // own bow length, so a section changes bow at different moments
@@ -1154,7 +1158,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       const float dv = bv - stringVel + nz * s.bowNoise * (0.35f + 1.6f * v.slip) * (1.0f + 2.5f * roll) * (bv < 0 ? -bv : bv);
       // the same bow force on a slower bow presses relatively harder: keep it
       // in the clean (Helmholtz) range
-      float sl = s.slope * v.slMul + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite - 0.6f * (v.vel - 1.0f);
+      const float bowPressure = (v.dir > 0.0f) ? 0.99f : 1.01f;
+      float sl = (s.slope * v.slMul + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite
+                - 0.6f * (v.vel - 1.0f)) * bowPressure;
       if (M.over > 0.0f) {
         sl -= 0.6f * M.over;                                 // overpressure: heavy bow
         if (sl < 0.15f) sl = 0.15f;

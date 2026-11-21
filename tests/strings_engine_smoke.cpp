@@ -185,8 +185,7 @@ int main() {
       stringsControl(s);
       if (!render(true, 20000, x)) { ++fails; continue; }
       const double r = rms(x, 4000, 20000);
-      // louder with every step (the top end is softly limited, so the last
-      // step only has to be a little louder)
+      // louder with every step; no limiter or automatic gain reduction
       if (k > 0 && r <= prev * (k == 2 ? 1.02 : 1.2)) { std::printf("FAIL velocity %.1f not louder (%.3f vs %.3f)\n", vels[k], r, prev); ++fails; }
       prev = r;
     }
@@ -205,6 +204,36 @@ int main() {
     stringsControl(s);
     if (std::fabs(s.vibHz - 6.0f) > 0.05f || std::fabs(s.tremHz - 6.0f) > 0.05f) {
       std::printf("FAIL tempo sync: vibrato %.2f Hz, tremolo %.2f Hz\n", s.vibHz, s.tremHz); ++fails;
+    }
+  }
+
+  // tremolo interval lock: the two bow strokes per phase cycle must stay
+  // on the selected BPM subdivision, and a pitch glide must not reset phase.
+  {
+    stringsInit(s);
+    s.instrument = MDL_SOLO_VIOLIN; s.rootHz = 440.0f; s.tremolo = true;
+    stringsControl(s);
+    const unsigned P = (unsigned)(0.5f * STR_SR); // 120 BPM
+    for (unsigned n = 0; n < 4 * P; ++n) {
+      if ((n & 127) == 0) stringsControl(s);
+      stringsTick(s, (n % P) < P * 9 / 10);
+    }
+    const float strokeHz = 2.0f * s.tremHz;
+    const float beatHz = STR_SR / (float)s.clockPeriod;
+    const float mult[12] = { 0.25f, 1.0f / 3, 0.5f, 2.0f / 3, 1.0f, 1.5f,
+                             2.0f, 3.0f, 4.0f, 6.0f, 8.0f, 12.0f };
+    bool onGrid = false;
+    for (int k = 0; k < 12; ++k)
+      if (std::fabs(strokeHz - beatHz * mult[k]) < 0.03f) onGrid = true;
+    if (!onGrid) { std::printf("FAIL tremolo strokes off BPM grid: %.3f Hz at %.1f BPM\\n", strokeHz, beatHz * 60.0f); ++fails; }
+    const float phase = s.v[0].tremPh;
+    s.rootHz = 523.25f; stringsControl(s);
+    if (std::fabs(s.v[0].tremPh - phase) > 1e-6f) {
+      std::printf("FAIL pitch update reset tremolo phase\\n"); ++fails;
+    }
+    const float expectedInc = s.tremHz / STR_SR;
+    if (std::fabs(s.v[0].tremInc - expectedInc) > 1e-8f) {
+      std::printf("FAIL tremolo increment no longer matches synced subdivision\\n"); ++fails;
     }
   }
 
