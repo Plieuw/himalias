@@ -16,22 +16,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build the repository toolchain image
         run: docker build -t himalia-iocore IOCore
-      - name: Compile Himalia firmware
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/PRJ" \
-            -v "${{ github.workspace }}/IOCore/variant_IOCore:/root/.arduino15/packages/dadamachines_doppler/hardware/samd/1.2.9/variants/IOCore" \
-            himalia-iocore bash -lc "arduino-cli compile --output-dir /tmp/himalia-build --fqbn dadamachines_doppler:samd:Himalia /PRJ/IOCore/HimaliaSketch/"
-
-      - name: Compile Himalia firmware
+      - name: Compile firmware and convert to UF2
         run: |
           mkdir -p "${{ github.workspace }}/firmware-output"
           docker run --rm \
             -v "${{ github.workspace }}:/PRJ" \
             -v "${{ github.workspace }}/firmware-output:/build" \
             -v "${{ github.workspace }}/IOCore/variant_IOCore:/root/.arduino15/packages/dadamachines_doppler/hardware/samd/1.2.9/variants/IOCore" \
-            himalia-iocore bash -lc "arduino-cli compile --output-dir /build --fqbn dadamachines_doppler:samd:Himalia /PRJ/IOCore/HimaliaSketch/"
-
+            himalia-iocore bash -lc "arduino-cli compile --output-dir /build --fqbn dadamachines_doppler:samd:Himalia /PRJ/IOCore/HimaliaSketch/ && python3 /root/uf2/utils/uf2conv.py -b 0x4000 -c -o /build/HimaliaSketch.ino.uf2 /build/HimaliaSketch.ino.bin"
+          test -s "${{ github.workspace }}/firmware-output/HimaliaSketch.ino.bin"
+          test -s "${{ github.workspace }}/firmware-output/HimaliaSketch.ino.uf2"
       - name: Upload firmware files
         uses: actions/upload-artifact@v4
         with:
