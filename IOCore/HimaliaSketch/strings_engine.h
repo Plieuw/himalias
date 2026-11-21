@@ -47,7 +47,7 @@
 #endif
 #define STR_AIR_DEFAULT 0.5f    // air band level (0 = none)
 #ifndef STR_OUT_GAIN
-#define STR_OUT_GAIN 1.5f       // make-up gain into the output limiter (+3.5 dB; more would flatten the dynamics)
+#define STR_OUT_GAIN 0.75f      // make-up gain into the output limiter (normal notes peak ~4.5 V)
 #endif
 #define STR_LIM_CEIL 0.97f      // limiter ceiling (+-4.85 V), no clipper
 #define STR_LIM_LOOK 64         // look-ahead (samples, 1.3 ms)
@@ -138,13 +138,13 @@ static const StrModelDef STR_MODELS[MDL_COUNT] = {
   { INS_FULL_STRINGS,   -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // full strings
   { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.9f, 1.15f, 0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // molto vibrato violin
   { INS_SOLO_CELLO,     ART_LEGATO,    -1,           -1, 1.7f, 0.8f,  0.6f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // romantic cello
-  { INS_VIOLIN_SECTION, ART_DETACHE,   -1,            1, 0.5f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.0f, 0.0f, 0.0f },  // tremolo section
+  { INS_VIOLIN_SECTION, ART_DETACHE,   -1,            1, 0.5f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.6f, 0.0f, 0.0f },  // tremolo section
   { INS_VIOLIN_SECTION, ART_LEGATO,    -1,           -1, 0.3f, 1.0f,  0.0f, 2,   1.0f,  0.5f, 1.0f, 1.0f, 0.0f, 0.0f },  // trill section (whole tone)
   { INS_LOW_STRINGS,    ART_SPICCATO,  LAY_OCTAVES,   0, 0.0f, 1.0f,  0.0f, 0,   3.5f,  0.2f, 0.25f, 2.4f, 0.0f, 0.0f },  // epic ostinato
   { INS_VIOLIN_SECTION, ART_PONTICELLO,LAY_CLUSTER,   1, 0.2f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.25f, 0.0f, 0.0f },  // suspense
   { INS_FULL_STRINGS,   ART_MARTELE,   LAY_OCTAVES,  -1, 1.6f, 1.1f,  0.0f, 0,   1.4f,  0.6f, 1.0f, 1.0f, 0.0f, 0.0f },  // heroic theme
   { INS_FULL_STRINGS,   ART_LEGATO,    -1,           -1, 1.4f, 0.95f, 1.6f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // emotional swell
-  { INS_VIOLIN_SECTION, ART_TASTO,     LAY_OCTAVES,  -1, 0.7f, 0.75f, 2.2f, 0,   1.0f,  1.0f, 1.0f, 1.1f, 0.0f, 0.0f },  // shimmer
+  { INS_VIOLIN_SECTION, ART_TASTO,     LAY_OCTAVES,  -1, 0.7f, 0.75f, 2.2f, 0,   1.0f,  1.0f, 1.0f, 2.4f, 0.0f, 0.0f },  // shimmer
   // experimental
   { INS_SOLO_CELLO,     -1,            -1,           -1, 0.3f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 1.0f, 0.0f },  // overpressure (ALF)
   { INS_VIOLIN_SECTION, -1,            LAY_UNISON,   -1, 0.25f,1.0f,  1.0f, 0,   1.0f,  1.2f, 1.0f, 1.0f, 0.0f, 2.0f },  // Threnody swarm
@@ -168,6 +168,17 @@ static const float STR_ARTIC_SCRATCH[ART_COUNT] = {
 
 // lowest open string per family (Hz): notes below are played an octave up
 static const float STR_FAMILY_LOW[STR_FAMILIES] = { 196.0f, 130.8f, 65.4f, 41.2f };
+// highest notes in normal orchestral playing: violin G7, viola F#6, cello C6, bass G4
+static const float STR_FAMILY_HIGH[STR_FAMILIES] = { 3136.0f, 1480.0f, 1046.5f, 392.0f };
+
+// The SAMPLE TUNE knob spans the real range of the instrument (lead player's
+// family): fully left = its lowest open string, fully right = its top note;
+// the pitch CV adds 1 V/oct on top. Returns the lowest note and the octaves.
+static inline void stringsPitchRange(uint8_t fam, float &lowHz, float &octaves) {
+  if (fam >= STR_FAMILIES) fam = 0;
+  lowHz = STR_FAMILY_LOW[fam];
+  octaves = log2f(STR_FAMILY_HIGH[fam] / STR_FAMILY_LOW[fam]);
+}
 
 struct StrVoice {
   float neck[STR_NECK_LEN];
@@ -209,6 +220,7 @@ struct StrVoice {
   // position and pressure follow it, long notes need bow changes
   float bowMul;                   // bow speed for this note (1 = normal)
   float bowGain;                  // level for this bow speed (slow softer, fast louder)
+  float slMul;                    // grip for this note's bow speed
   float bowUsed;                  // part of the bow used (1 = at the tip / frog)
   float bowLen;                   // this player's bow (seconds at normal speed)
   uint32_t turn;                  // samples left in a bow change
@@ -274,6 +286,7 @@ struct StringsEngine {
   float pressure;                 // bow pressure 0 ... 1
   float beta;                     // bow position: 0.04 ponticello ... 0.3 tasto
   float speedCV;                  // expression CV multiplier (1 = none)
+  float bowBase;                  // bow speed from the knob (log scale)
   bool  pizz, vibrato, tremolo;   // pizz: kept for compatibility (= ART_PIZZICATO)
   bool  mute;                     // con sordino
   uint8_t artic;
@@ -441,7 +454,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.tran = 0.0f; v.tranHp = 0.0f; v.tremPrev = 1.0f; v.vel = 1.0f; v.prevB = 0.0f;
     v.vibDelay = 0; v.vibWarm = 1.0f; v.jitR = v.jitRT = v.jitD = v.jitDT = 1.0f;
     v.vibPrevS = 0.0f; v.fingerLen = v.len;
-    v.bowMul = 1.0f; v.bowGain = 1.0f; v.bowUsed = 0.0f; v.bowLen = 3.0f * (0.85f + 0.3f * (0.5f + 0.5f * strRand(s)));
+    v.bowMul = 1.0f; v.bowGain = 1.0f; v.slMul = 1.0f; v.bowUsed = 0.0f; v.bowLen = 3.0f * (0.85f + 0.3f * (0.5f + 0.5f * strRand(s)));
     v.turn = 0; v.slip = 0.0f; v.tBp1 = v.tBp2 = 0.0f;
     v.alfT = 0.0f;
     v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = 0.0f;
@@ -456,7 +469,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.family = FAM_VIOLIN;
     v.active = (i == 0); v.gate = false; v.pluck = false;
   }
-  s.rootHz = 220.0f; s.speed = 0.5f; s.pressure = 0.5f; s.beta = 0.12f; s.speedCV = 1.0f;
+  s.rootHz = 220.0f; s.speed = 0.5f; s.pressure = 0.5f; s.beta = 0.12f; s.speedCV = 1.0f; s.bowBase = 0.113f;
   s.pizz = false; s.vibrato = true; s.tremolo = false; s.mute = false; s.artic = ART_LEGATO;
   for (int f = 0; f < STR_FAMILIES; f++) { s.famLp[f] = 0; s.famLpLead[f] = 0; s.famLpK[f] = 0.5f; }
   s.outDivisi = 0; s.dc2x = s.dc2y = 0;
@@ -651,7 +664,21 @@ static inline void stringsControl(StringsEngine &s) {
   // bow: pressure sets the friction curve (higher pressure = longer sticking,
   // more grit)
   const float press = strClamp(s.pressure * A.press, 0.0f, 1.0f);
-  s.slope   = 5.0f - 4.0f * press;
+  // the CLOCK RATE knob: bow speed on a log scale like real bow speeds,
+  // ~9 cm/s (fully left) ... ~25 cm/s (centre) ... ~70 cm/s (fully right)
+  s.bowBase = 0.04f * powf(8.0f, strClamp(s.speed, 0.0f, 1.0f));
+  // the PRESSURE knob is relative to the playable (Helmholtz) window, which
+  // moves with the bow position like on a real instrument (Schelleng): over
+  // the fingerboard a light bow, near the bridge more force. Centre = normal
+  // tone, left = light (towards flautando), right = heavy (towards crunch)
+  {
+    const float bb = strClamp(s.beta, 0.03f, 0.30f);
+    // friction slope for a normal tone (measured): grows with the bow
+    // distance, and a faster bow needs more grip (smaller slope)
+    const float centre = 26.0f * powf(bb, 1.1f) * powf(s.bowBase * s.speedCV / 0.113f + 0.05f, -0.6f);
+    s.slope = centre * powf(3.0f, 1.0f - 2.0f * press);
+  }
+
   s.loss    = 0.95f;
   // string damping follows the bow position: near the bridge (ponticello) the
   // tone is glassy and bright, over the fingerboard (tasto) soft and dark
@@ -742,7 +769,7 @@ static inline void stringsControl(StringsEngine &s) {
     }
     float hz = s.rootHz * exp2f(((float)semis + swarmSemis) / 12.0f);
     while (hz < STR_FAMILY_LOW[fam]) hz *= 2.0f;            // keep it on the instrument
-    if (hz > 3500.0f) hz = 3500.0f;
+    while (hz > STR_FAMILY_HIGH[fam] * 1.02f) hz *= 0.5f;
     if (!solo) hz *= v.detune;
     hz *= exp2f(v.drift / 1200.0f);
     v.hz = hz;
@@ -925,7 +952,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     s.gatePrev = gate;
   }
 
-  const float bowMax = (0.03f + 0.20f * s.speed) * s.speedCV;
+  const float bowMax = s.bowBase * s.speedCV;
   // overpressure: PRESSURE knob picks crunch / octave down / twelfth down;
   // the weakly driven periods lose level, give it back
   const int ovrDiv = M.over > 0.0f ? (s.pressure > 0.75f ? 3 : (s.pressure > 0.4f ? 2 : 1)) : 1;
@@ -969,6 +996,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           // the string alone gives a slow bow more level than a player would:
           // slow ~-2 dB, fast ~+2 dB against a normal bow (measured)
           v.bowGain = v.bowMul < 1.0f ? 1.0f - 0.96f * (1.0f - v.bowMul) : 1.0f;
+          v.slMul = powf(v.bowMul, -0.6f);                     // the same Schelleng scaling per note
           v.accent = A.accent * M.accent * (0.4f + 0.6f * v.vel);
           v.swell = M.swell > 0 ? 0.15f : 1.0f;               // swell: start soft
           // noise transient: scratch / snap / click, a bit different every time
@@ -1135,8 +1163,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       const float dv = bv - stringVel + nz * s.bowNoise * (0.35f + 1.6f * v.slip) * (1.0f + 2.5f * roll) * (bv < 0 ? -bv : bv);
       // the same bow force on a slower bow presses relatively harder: keep it
       // in the clean (Helmholtz) range
-      float sl = s.slope + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite - 1.2f * (v.vel - 1.0f)
-               - 0.6f * (1.0f - v.bowMul);
+      float sl = s.slope * v.slMul + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite - 0.6f * (v.vel - 1.0f);
       if (M.over > 0.0f) {
         sl -= 0.6f * M.over;                                 // overpressure: heavy bow
         if (sl < 0.15f) sl = 0.15f;

@@ -1,6 +1,7 @@
 // Host test for the Himalia strings engine (v2).
 // Checks every instrument x layout for finite, bounded, non-silent output,
 // solo intonation, pizzicato decay and tremolo.
+#define STR_OUT_GAIN 0.6f   // test the engine itself (limiter barely active)
 #include "../IOCore/HimaliaSketch/strings_engine.h"
 #include <cmath>
 #include <cstdio>

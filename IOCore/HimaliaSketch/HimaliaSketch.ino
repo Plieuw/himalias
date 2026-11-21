@@ -2,7 +2,9 @@
 //  Himalia firmware -- Strings (bowed-string physical model), beta
 //
 //  SAMPLE OUT: up to six bowed strings from one pitch CV (strings_engine.h)
-//   - SAMPLE TUNE knob + CV ....... pitch (knob 7 octaves, CV 1 V/oct, -10 ... +10 V)
+//   - SAMPLE TUNE knob + CV ....... pitch: the knob spans the instrument's real
+//                                   range (left = lowest open string: violin G3,
+//                                   viola C3, cello C2, bass E1), CV 1 V/oct on top
 //   - RATCHET knob ................ model (18): solo violin, solo viola, solo
 //                                   cello, violin / viola / cello section, full
 //                                   strings, molto vibrato violin, romantic cello,
@@ -12,8 +14,11 @@
 //                                   twelfth down), Threnody swarm
 //   - SPREAD knob + CV ............ layout: unison, octaves, fifths, major, minor,
 //                                   divisi major, divisi minor, cluster
-//   - SAMPLE SELECT knob + CV ..... bow pressure
-//   - CLOCK RATE knob ............. bow speed
+//   - SAMPLE SELECT knob + CV ..... bow pressure, relative to the playable window
+//                                   (centre = normal tone at any bow position /
+//                                   speed, left = light, right = heavy); CV 1 V = 10 %
+//   - CLOCK RATE knob ............. bow speed, log scale ~9 ... 25 ... 70 cm/s
+//   - LED CLK ..................... blinks on the detected beat
 //   - diagnose: hold TRIGGER while powering up -> divisi out = CPU load
 //                                   (0 ... +5 V = 0 ... 100 %), trigger out high
 //                                   while the CPU guard has dropped players
@@ -41,7 +46,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.17.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.18.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -525,6 +530,27 @@ void renderAudio() {
     // Six-voice bowed-string engine; mono sum goes to SAMPLE OUT.
     float out = stringsTick(strings, gate);
 
+    // LED CLK: blinks on the beat the rhythm analysis found (also with
+    // ostinato patterns), so you can see that the module has your tempo.
+    // Diagnose mode: on while the CPU guard runs fewer than 6 players.
+    {
+      static uint32_t beat_cnt = 0, led_ticks = 0;
+      static bool gate_prev = false;
+      const uint32_t P = strings.clockPeriod;
+      if(P){
+        // a note near the beat pulls the blink back in phase
+        if(gate && !gate_prev && (beat_cnt < P / 6 || beat_cnt > P - P / 6)) beat_cnt = 0;
+        if(beat_cnt == 0) led_ticks = (uint32_t)(0.04f * samplerate);
+        if(++beat_cnt >= P) beat_cnt = 0;
+      } else beat_cnt = 0;
+      gate_prev = gate;
+      bool led = led_ticks > 0;
+      if(led_ticks) led_ticks--;
+      if(diag_mode) led = strings.maxVoices < STR_VOICES;
+      if(led) PORT->Group[PORTB].OUTSET.reg = 1ul << 0;
+      else    PORT->Group[PORTB].OUTCLR.reg = 1ul << 0;
+    }
+
 
 
     // Eurorack level: +-1 = +-5 V (10 Vpp), centred on the DAC code that
@@ -635,8 +661,11 @@ void loop() {
   // ---- pitch: SAMPLE TUNE knob + CV (1 V/oct)
   uint16_t sample_pitch_poti = adc51.readAnalog(PA07,ADC_Channel7,false);
   uint16_t sample_pitch_jack = adc51.readAnalog(PB06,ADC_Channel8,true);   // ADC1 AIN8 = PB06
-  const float PITCH_LOW_HZ  = 27.5f;
-  const float PITCH_OCTAVES = 7.0f;
+  // the knob spans the real range of the instrument: fully left = its lowest
+  // open string (violin G3, viola C3, cello C2, bass E1), fully right = its
+  // top note; the CV adds 1 V/oct (0 V = the knob's note)
+  float PITCH_LOW_HZ, PITCH_OCTAVES;
+  stringsPitchRange(strings.v[0].family, PITCH_LOW_HZ, PITCH_OCTAVES);
   float pitch_oct = (float)sample_pitch_poti * (PITCH_OCTAVES / 4095.0f);
   if(sample_pitch_jack < CV_UNPATCHED)
     pitch_oct += cvVolts(sample_pitch_jack);

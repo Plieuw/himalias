@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.17.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.18.0-beta.uf2`
 
 ## Concept
 
@@ -41,6 +41,23 @@ until the next power-up:
 - the trigger out is **high while the CPU guard runs fewer than 6 players**
   (patch an LED / gate input).
 SAMPLE OUT plays normally.
+
+## Knobs and CVs in real terms (v1.18)
+
+| control | range, like on a real instrument |
+|---|---|
+| SAMPLE TUNE knob | the instrument's real range: fully left = lowest open string (violin G3, viola C3, cello C2, bass E1), fully right = top note (violin G7, viola F#6, cello C6, bass G4). Pitch CV 1 V/oct on top (0 V = the knob's note). Notes outside the range fold by octaves into it, per player (each instrument in a section stays in its own range) |
+| CLOCK RATE knob | bow speed on a log scale: ~9 cm/s (left) ... ~25 cm/s (centre) ... ~70 cm/s (right) |
+| SAMPLE SELECT knob + CV | bow force **relative to the playable window** (Schelleng): the window moves with bow position and bow speed, the knob follows it. Centre = normal tone at any bow position / speed / articulation; left = light (towards flautando / surface sound), right = heavy (towards crunch). CV 1 V = 10 % of the knob |
+| CV IN RATE | dynamic gate 0 ... 10 V (soft ... full); bow speed, grip and level follow it: soft -> normal ~+12 dB |
+| LED CLK | blinks on the detected beat (rhythm analysis), so you can see the tempo was found; diagnose mode: on while the CPU guard has dropped players |
+
+Measured (harmonics-to-noise over the pressure knob, legato / tasto /
+ponticello, three bow speeds): the middle half of the knob is clean
+everywhere (>= 34 dB); before, ponticello could break up in the middle.
+
+The output gain is set so normal notes (no dynamic gate) peak ~3.4 ... 4.9 V
+over all 18 models; louder dynamic-gate notes go into the limiter.
 
 ## Dynamic gates
 
