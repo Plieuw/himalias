@@ -151,6 +151,13 @@ struct StrVoice {
   float vibAmt;                   // vibrato depth, fades in after the onset
   float vibDepth;                 // this player's depth
   float vibRateMul, vibDepthMul;  // this player's character
+  // realistic vibrato: delayed start, slow-to-settle rate, cycle-to-cycle
+  // wobble of rate and width, finger changes
+  uint32_t vibDelay;              // samples before the vibrato starts
+  float vibWarm;                  // rate / width settle after the start (0.75 ... 1)
+  float jitR, jitRT, jitD, jitDT; // rate / width wobble (current, target)
+  float vibPrevS;                 // previous vibrato sine (cycle start detection)
+  float fingerLen;                // stopped string length the finger is on
   float tremPh, tremInc;          // tremolo bow strokes
   float speedScale, pressOffs;    // this player's bow
   float detune;                   // static intonation (ratio)
@@ -196,6 +203,7 @@ struct StringsEngine {
   uint8_t artic;
   uint8_t maxVoices;              // CPU guard: the firmware lowers this when the audio interrupt gets too slow
   float trillPh, trillInc;        // trill (alternating upper note)
+  bool  trillPrev;                // trill state last sample (finger taps)
   StrModelDef model;              // current model (copied by stringsControl)
   uint8_t articEff;               // articulation in use (model or knob)
   uint8_t instrument, layout;
@@ -344,6 +352,8 @@ static inline void stringsInit(StringsEngine &s) {
     v.onset = 0; v.pluckN = v.pluckLen = 0; v.pluckAmp = 0.5f;
     v.strokeN = 0; v.dir = 1.0f; v.accent = 0.0f; v.swell = 1.0f;
     v.tran = 0.0f; v.tranHp = 0.0f; v.tremPrev = 1.0f; v.vel = 1.0f; v.prevB = 0.0f;
+    v.vibDelay = 0; v.vibWarm = 1.0f; v.jitR = v.jitRT = v.jitD = v.jitDT = 1.0f;
+    v.vibPrevS = 0.0f; v.fingerLen = v.len;
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
     v.ringLoss = 0.99f;
     v.hz = 220.0f;
@@ -361,7 +371,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.now = 0; s.onW = 0; s.onN = 0; s.onCount = 0; s.onSeen = 0;
   s.pulse = 0; s.patLen = 0; s.patPulses = 0; s.beatCand = 0; s.vibHz = 0; s.tremHz = 6.5f;
   s.instrument = MDL_SOLO_VIOLIN; s.layout = LAY_UNISON; s.maxVoices = STR_VOICES;
-  s.trillPh = 0; s.trillInc = 9.0f / STR_SR;
+  s.trillPh = 0; s.trillInc = 9.0f / STR_SR; s.trillPrev = false;
   s.model = STR_MODELS[0]; s.articEff = ART_LEGATO;
   s.divisiMask = 0x3F;
   for (int i = 0; i < STR_VOICES; i++) s.divisiTone[i] = 0;
@@ -659,6 +669,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     if (s.trillPh >= 1.0f) s.trillPh -= 1.0f;
     trillUp = s.trillPh >= 0.5f;
   }
+  if (M.trill && trillUp != s.trillPrev) {                // trill: every finger hit / lift taps
+    for (int i = 0; i < STR_VOICES; i++) if (s.v[i].active && s.v[i].env > 0.2f) s.v[i].tran += trillUp ? 0.07f : 0.03f;
+    s.trillPrev = trillUp;
+  }
   const float trillRatio = M.trill == 2 ? 0.8908987f : (M.trill == 1 ? 0.9438743f : 1.0f);
   // ---- tempo: log every gate start (time + velocity); stringsTempo() finds
   //      the pulse, the ostinato pattern and the beat from it
@@ -721,7 +735,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
                  * (0.3f + 0.7f * v.vel);
           if (A.alternate) v.dir = -v.dir;                    // up-bow / down-bow
           if (A.glide > 0.0005f || v.env < 0.05f) v.len = v.lenTarget;   // new note: no slide
-          v.vibAmt = 0;                                       // vibrato starts later
+          v.vibAmt = 0;                                       // vibrato starts later:
+          v.vibDelay = (uint32_t)((0.12f + 0.06f * (1.0f + strRand(s))) * STR_SR);   // ~0.12-0.24 s straight tone,
+          v.vibWarm = 0.75f;                                  // then slower and narrower at first
+          v.fingerLen = v.lenTarget;
           if (A.mode == MODE_PLUCK) {                         // pizzicato
             v.pluck = true; v.pluckN = 0;
             // harder pluck = shorter, brighter finger contact
@@ -750,12 +767,43 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
 
     // vibrato: own oscillator, fades in ~0.3 s after the note starts and
     // grows with the bow speed
-    v.vs += v.vibK * v.vc;
-    v.vc -= v.vibK * v.vs;
-    const float vibTarget = (s.vibrato && v.gate && A.mode == MODE_BOW)
-                          ? v.vibDepth * (0.6f + 0.4f * s.speed) * (0.75f + 0.25f * v.vel) : 0.0f;
+    // finger change while the bow keeps going (legato pitch change): the
+    // finger lands with a small tap and the vibrato stops and starts again
+    if (fabsf(v.lenTarget - v.fingerLen) > 0.025f * v.fingerLen) {
+      if (v.gate && A.mode == MODE_BOW && v.env > 0.2f) {
+        v.tran += 0.10f;                                     // finger tap noise
+        if (!v.pluck) { v.pluck = true; v.pluckN = 0; v.pluckLen = 10; v.pluckAmp = 0.06f; }
+        v.vibAmt *= 0.3f;
+        v.vibDelay = (uint32_t)(0.05f * STR_SR);
+        v.vibWarm = 0.85f;
+      }
+      v.fingerLen = v.lenTarget;
+    }
+    if (v.vibDelay) v.vibDelay--;
+    else v.vibWarm += (1.0f - v.vibWarm) * 0.00004f;         // settles in ~0.5 s
+    // every cycle the hand wobbles a little: new rate (+-4 %) and width (+-15 %)
+    if (v.vs >= 0.0f && v.vibPrevS < 0.0f) {
+      v.jitRT = 1.0f + 0.04f * strRand(s);
+      v.jitDT = 1.0f + 0.15f * strRand(s);
+    }
+    v.vibPrevS = v.vs;
+    v.jitR += (v.jitRT - v.jitR) * 0.0004f;
+    v.jitD += (v.jitDT - v.jitD) * 0.0004f;
+    const float vk = v.vibK * v.jitR * v.vibWarm;
+    v.vs += vk * v.vc;
+    v.vc -= vk * v.vs;
+    const float vibTarget = (s.vibrato && v.gate && A.mode == MODE_BOW && !v.vibDelay)
+                          ? v.vibDepth * (0.6f + 0.4f * s.speed) * (0.75f + 0.25f * v.vel)
+                            * v.jitD * (0.4f + 0.6f * v.vibWarm) : 0.0f;
     v.vibAmt += (vibTarget - v.vibAmt) * 0.00007f;
-    const float L = v.len * (1.0f + v.vibAmt * v.vs) * (trillUp ? trillRatio : 1.0f);
+    // the finger rolls back from the note: the pitch swings mostly below it,
+    // and the roll is a little asymmetric (a touch of the 2nd harmonic)
+    const float vibShape = v.vs + 0.12f * (2.0f * v.vs * v.vc) + 0.3f;
+    // how fast the finger moves right now (0 ... ~2): the stick-slip gets
+    // rougher while the string length changes fastest
+    const float vibRel = v.vibAmt * 100.0f;
+    const float roll = vibRel * (v.vc < 0 ? -v.vc : v.vc);
+    const float L = v.len * (1.0f + v.vibAmt * vibShape) * (trillUp ? trillRatio : 1.0f);
 
     // bow position splits the string: bridge side beta, nut side 1 - beta
     float beta = s.beta;
@@ -794,7 +842,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       const float nz = (float)(int32_t)v.nrng * (1.0f / 2147483648.0f);
       // friction: stick while the velocity difference is small, slip above.
       // The accent bites in with extra pressure (martele).
-      const float dv = bv - stringVel + nz * s.bowNoise * (bv < 0 ? -bv : bv);
+      bv *= 1.0f + 0.04f * vibRel * v.vc;                  // the bow arm moves with the hand
+      const float dv = bv - stringVel + nz * s.bowNoise * (1.0f + 2.5f * roll) * (bv < 0 ? -bv : bv);
       float sl = s.slope + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite - 1.2f * (v.vel - 1.0f);
       if (sl < 0.6f) sl = 0.6f;
       float t = dv * sl + 0.001f;

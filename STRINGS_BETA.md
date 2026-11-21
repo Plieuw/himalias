@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.7.1-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.8.0-beta.uf2`
 
 ## Concept
 
@@ -76,7 +76,23 @@ through the body (highpassed).
 After the bow leaves the string it rings on (per articulation, the same time
 for every note); con sordino shortens that.
 
-## Tempo (rhythm analysis, also for ostinati)
+## Vibrato and the noises around it
+
+Vibrato is played like a string player does it:
+
+- a straight tone first (~0.12 ... 0.24 s), then the vibrato starts a bit
+  slower and narrower and settles in ~0.5 s;
+- every cycle the hand wobbles: rate +-4 %, width +-15 %;
+- the finger rolls back from the note, so the pitch swings mostly below it
+  (slightly asymmetric shape); the bow arm moves along a little;
+- the rosin noise gets rougher where the finger moves fastest (the middle of
+  every vibrato swing), so the noise pulses with the vibrato;
+- a pitch change while the bow keeps going (legato) is a finger change: a
+  small finger tap into the string plus a click, and the vibrato stops and
+  starts again;
+- trills: every finger hit and lift taps.
+
+, also for ostinati)
 
 Every gate start (TRIGGER or the dynamic gate on CV IN RATE) is logged with
 its time and velocity; the last 32 intervals are analysed:
