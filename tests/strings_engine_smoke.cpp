@@ -76,7 +76,7 @@ int main() {
   const float vc[] = { 65.41f, 130.8f, 261.6f };
   for (int k = 0; k < 6; ++k) {
     stringsInit(s);
-    s.instrument = k < 3 ? INS_SOLO_VIOLIN : INS_SOLO_CELLO;
+    s.instrument = k < 3 ? MDL_SOLO_VIOLIN : MDL_SOLO_CELLO;
     s.rootHz = k < 3 ? vn[k] : vc[k - 3];
     s.speed = 0.5f; s.pressure = 0.5f; s.beta = 0.11f; s.vibrato = false;
     stringsControl(s);
@@ -88,7 +88,7 @@ int main() {
 
   // pizzicato: plucked, then dies away
   stringsInit(s);
-  s.instrument = INS_SOLO_VIOLIN; s.rootHz = 392.0f; s.pizz = true;
+  s.instrument = MDL_SOLO_VIOLIN; s.rootHz = 392.0f; s.pizz = true;
   stringsControl(s);
   if (!render(true, 95000, x)) ++fails;
   else {
@@ -98,13 +98,13 @@ int main() {
 
   // tremolo: bowing keeps sounding
   stringsInit(s);
-  s.instrument = INS_VIOLIN_SECTION; s.rootHz = 392.0f; s.tremolo = true;
+  s.instrument = MDL_VIOLIN_SECTION; s.rootHz = 392.0f; s.tremolo = true;
   stringsControl(s);
   if (!render(true, 60000, x) || rms(x, 20000, 60000) < 0.02) { std::printf("FAIL tremolo\n"); ++fails; }
 
   // release: silence after the gate closes
   stringsInit(s);
-  s.instrument = INS_FULL_STRINGS; s.rootHz = 220.0f;
+  s.instrument = MDL_FULL_STRINGS; s.rootHz = 220.0f;
   stringsControl(s);
   render(true, 30000, x);
   if (!render(false, 120000, x) || rms(x, 100000, 120000) > 0.005) { std::printf("FAIL release\n"); ++fails; }
@@ -113,7 +113,7 @@ int main() {
   for (int art = 0; art < ART_COUNT; ++art) {
     for (int ins = 0; ins < 2; ++ins) {
       stringsInit(s);
-      s.instrument = ins ? INS_CELLO_SECTION : INS_SOLO_VIOLIN; s.artic = (uint8_t)art;
+      s.instrument = ins ? MDL_CELLO_SECTION : MDL_SOLO_VIOLIN; s.artic = (uint8_t)art;
       s.rootHz = ins ? 130.8f : 440.0f; s.speed = 0.6f; s.pressure = 0.6f;
       stringsControl(s);
       if (!render(true, 12000, x)) { std::printf("FAIL artic %d: not finite\n", art); ++fails; continue; }
@@ -125,7 +125,7 @@ int main() {
 
   // divisi output: silent for a solo, sounding for a section, never louder than the mix
   {
-    const int ins[2] = { INS_SOLO_VIOLIN, INS_VIOLIN_SECTION };
+    const int ins[2] = { MDL_SOLO_VIOLIN, MDL_VIOLIN_SECTION };
     for (int k = 0; k < 2; ++k) {
       stringsInit(s);
       s.instrument = (uint8_t)ins[k]; s.layout = LAY_MAJOR; s.rootHz = 261.6f; s.speed = 0.6f;
@@ -165,7 +165,7 @@ int main() {
 
   // tempo: gates every 0.5 s -> vibrato 6 Hz, tremolo 12 strokes / s
   stringsInit(s);
-  s.instrument = INS_SOLO_VIOLIN; s.rootHz = 440.0f; s.tremolo = true;
+  s.instrument = MDL_SOLO_VIOLIN; s.rootHz = 440.0f; s.tremolo = true;
   stringsControl(s);
   {
     const unsigned P = (unsigned)(0.5f * STR_SR);

@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.10.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.11.0-beta.uf2`
 
 ## Concept
 
@@ -16,7 +16,7 @@ the former squares sequencer now drive the **generative divisi**.
 | Himalia control | Strings function |
 |---|---|
 | SAMPLE TUNE knob + CV | pitch: knob 7 octaves from A0, CV 1 V/oct (-10 ... +10 V) |
-| RATCHET knob | model (14, see below) |
+| RATCHET knob | model (18, see below) |
 | SPREAD knob + CV | layout: unison, octaves, fifths, major, minor, divisi major, divisi minor, cluster |
 | SAMPLE SELECT knob + CV | bow pressure |
 | CLOCK RATE knob | bow speed |
@@ -142,24 +142,34 @@ pattern (notes / pulses).
 | # | model | what it is |
 |---|---|---|
 | 1 | solo violin | one violin |
-| 2 | solo cello | one cello |
-| 3 | violin section | six violins |
-| 4 | cello section | six cellos |
-| 5 | full strings | violin I, violin II, viola, cello, cello, double bass |
-| 6 | molto vibrato violin | solo violin, wider and faster vibrato |
-| 7 | romantic cello | solo cello, slow wide vibrato, every note swells a little (legato) |
-| 8 | tremolo section | violins, always tremolo on the tempo, tight ensemble |
-| 9 | trill section | violins trilling a whole tone, ~9 notes/s or on the tempo |
-| 10 | epic ostinato | violas, cellos and basses in octaves, short punchy spiccato, very tight (trailer-style ostinatos) |
-| 11 | suspense | violins sul ponticello tremolo in a semitone cluster (thriller / horror) |
-| 12 | heroic theme | full strings in octaves, marcato, big vibrato (epic themes) |
-| 13 | emotional swell | full strings, every note swells in over ~1.6 s, rich vibrato |
-| 14 | shimmer | violins sul tasto in octaves, slow vibrato, slow swell (airy high pads) |
+| 2 | solo viola | one viola (own body IR, vibrato and register) |
+| 3 | solo cello | one cello |
+| 4 | violin section | six violins |
+| 5 | viola section | six violas |
+| 6 | cello section | six cellos |
+| 7 | full strings | violin I, violin II, viola, cello, cello, double bass |
+| 8 | molto vibrato violin | solo violin, wider and faster vibrato |
+| 9 | romantic cello | solo cello, slow wide vibrato, every note swells a little (legato) |
+| 10 | tremolo section | violins, always tremolo on the tempo, tight ensemble |
+| 11 | trill section | violins trilling a whole tone, ~9 notes/s or on the tempo |
+| 12 | epic ostinato | violas, cellos and basses in octaves, short punchy spiccato, very tight (trailer-style ostinatos) |
+| 13 | suspense | violins sul ponticello tremolo in a semitone cluster (thriller / horror) |
+| 14 | heroic theme | full strings in octaves, marcato, big vibrato (epic themes) |
+| 15 | emotional swell | full strings, every note swells in over ~1.6 s, rich vibrato |
+| 16 | shimmer | violins sul tasto in octaves, slow vibrato, slow swell (airy high pads) |
+| 17 | overpressure (experimental) | solo cello with a heavy, creaking bow. **PRESSURE knob**: below 0.4 crunch only, 0.4 ... 0.75 an octave below, above 0.75 an octave + fifth below (subharmonics like the extended technique "ALF") |
+| 18 | Threnody swarm (experimental) | violin section that glides apart from the note into a quarter-tone cluster (up to +-2 semitones) and back together, ~12 s per cycle from every gate; tremolo with the BIT switch |
 
-Models 7 ... 14 set their own articulation and/or layout; the knobs for those
-are then ignored (the models that leave them free still follow the knobs).
-Models 10 ... 14 are inspired by typical film-score string writing, not copies
-of any score.
+Models 9 ... 18 set some of their own articulation / layout; the knobs for
+those are then ignored (the models that leave them free still follow the
+knobs). Models 12 ... 16 are inspired by typical film-score string writing,
+17 and 18 by 20th-century extended techniques; not copies of any score.
+
+**Overpressure** physics: the simple friction model does not fall into real
+subharmonics by itself, so the bow speed is driven per string period (one
+period hard, the others weak, locked to the string): the motion repeats every
+2 or 3 periods. Measured: the subharmonic series 4 ... 11 dB (octave) and
+5 ... 7 dB (twelfth) above the normal harmonics, level made up.
 
 ## Instruments and layouts
 
@@ -220,7 +230,7 @@ depth per family (violin 5.6 Hz +-17 c ... cello 5.0 Hz +-21 c).
 
 ## Verification
 
-- `tests/strings_engine_smoke.cpp` (GitHub Actions): every instrument x layout
+- `tests/strings_engine_smoke.cpp` (GitHub Actions): every model (18) x layout
   and every articulation finite, bounded and sounding; tempo sync (gates every
   0.5 s -> vibrato 6 Hz, tremolo 12 strokes / s); solo intonation within 10 cents for violin
   G3 / A4 / A5 and cello C2 / C3 / C4; pizzicato decays; tremolo sounds;

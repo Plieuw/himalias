@@ -43,20 +43,32 @@
 #define STR_IR_FFT   256
 #define STR_IR_PARTS (STR_IR_LEN / STR_IR_BLOCK)
 #define STR_IR_BINS  (STR_IR_FFT / 2 + 1)
+#ifndef STR_OVR_GRIP
+#define STR_OVR_GRIP 1.0f      // overpressure: bow speed boost on the driven period
+#define STR_OVR_FREE 0.85f     // ... and cut on the others (octave down)
+#endif
+#ifndef STR_OVR_FREE3
+#define STR_OVR_FREE3 0.95f    // ... (octave + fifth down)
+#endif
+#ifndef STR_SL_MIN
+#define STR_SL_MIN 0.6f
+#endif
 #define STR_IR_GAIN  0.95f   // average level as the old modal body
 #define STR_AIR_DEFAULT 0.5f    // air band level (0 = none)
 
 enum StrFamily     : uint8_t { FAM_VIOLIN = 0, FAM_VIOLA, FAM_CELLO, FAM_BASS };
 // base ensembles
 enum StrInstrument : uint8_t { INS_SOLO_VIOLIN = 0, INS_SOLO_CELLO, INS_VIOLIN_SECTION,
-                               INS_CELLO_SECTION, INS_FULL_STRINGS, INS_LOW_STRINGS, INS_BASE_COUNT };
+                               INS_CELLO_SECTION, INS_FULL_STRINGS, INS_LOW_STRINGS,
+                               INS_SOLO_VIOLA, INS_VIOLA_SECTION, INS_BASE_COUNT };
 enum StrLayout     : uint8_t { LAY_UNISON = 0, LAY_OCTAVES, LAY_FIFTHS, LAY_MAJOR, LAY_MINOR,
                                LAY_DIVISI_MAJOR, LAY_DIVISI_MINOR, LAY_CLUSTER, LAY_COUNT };
 // models on the RATCHET knob: a base ensemble plus playing style
-enum StrModel : uint8_t { MDL_SOLO_VIOLIN = 0, MDL_SOLO_CELLO, MDL_VIOLIN_SECTION, MDL_CELLO_SECTION,
+enum StrModel : uint8_t { MDL_SOLO_VIOLIN = 0, MDL_SOLO_VIOLA, MDL_SOLO_CELLO, MDL_VIOLIN_SECTION,
+                          MDL_VIOLA_SECTION, MDL_CELLO_SECTION,
                           MDL_FULL_STRINGS, MDL_MOLTO_VIBRATO, MDL_ROMANTIC_CELLO, MDL_TREMOLO_SECTION,
                           MDL_TRILL_SECTION, MDL_EPIC_OSTINATO, MDL_SUSPENSE, MDL_HEROIC,
-                          MDL_EMOTIONAL_SWELL, MDL_SHIMMER, MDL_COUNT };
+                          MDL_EMOTIONAL_SWELL, MDL_SHIMMER, MDL_OVERPRESSURE, MDL_THRENODY, MDL_COUNT };
 #define INS_COUNT MDL_COUNT        // the RATCHET knob selects one of the models
 
 // Articulations (SQUARES MAIN TUNE knob + CV)
@@ -111,23 +123,30 @@ struct StrModelDef {
   float   tight;      // onset spread multiplier (ensemble timing)
   float   ring;       // ring-out multiplier (short = punchy)
   float   gain;       // level (short low notes need more)
+  float   over;       // overpressure (0 = off): crunch, PRESSURE knob picks subharmonics
+  float   swarm;      // Threnody swarm: players glide apart into a quarter-tone cluster (semitones, 0 = off)
 };
 static const StrModelDef STR_MODELS[MDL_COUNT] = {
   //  base                art            layout        trem vibD  vibR  swell trill accent tight ring gain
-  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // solo violin
-  { INS_SOLO_CELLO,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // solo cello
-  { INS_VIOLIN_SECTION, -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // violin section
-  { INS_CELLO_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // cello section
-  { INS_FULL_STRINGS,   -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // full strings
-  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.9f, 1.15f, 0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // molto vibrato violin
-  { INS_SOLO_CELLO,     ART_LEGATO,    -1,           -1, 1.7f, 0.8f,  0.6f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // romantic cello
-  { INS_VIOLIN_SECTION, ART_DETACHE,   -1,            1, 0.5f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.0f },  // tremolo section
-  { INS_VIOLIN_SECTION, ART_LEGATO,    -1,           -1, 0.3f, 1.0f,  0.0f, 2,   1.0f,  0.5f, 1.0f, 1.0f },  // trill section (whole tone)
-  { INS_LOW_STRINGS,    ART_SPICCATO,  LAY_OCTAVES,   0, 0.0f, 1.0f,  0.0f, 0,   3.5f,  0.2f, 0.25f, 2.4f },  // epic ostinato
-  { INS_VIOLIN_SECTION, ART_PONTICELLO,LAY_CLUSTER,   1, 0.2f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.0f },  // suspense
-  { INS_FULL_STRINGS,   ART_MARTELE,   LAY_OCTAVES,  -1, 1.6f, 1.1f,  0.0f, 0,   1.4f,  0.6f, 1.0f, 1.0f },  // heroic theme
-  { INS_FULL_STRINGS,   ART_LEGATO,    -1,           -1, 1.4f, 0.95f, 1.6f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // emotional swell
-  { INS_VIOLIN_SECTION, ART_TASTO,     LAY_OCTAVES,  -1, 0.7f, 0.75f, 2.2f, 0,   1.0f,  1.0f, 1.0f, 1.0f },  // shimmer
+  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // solo violin
+  { INS_SOLO_VIOLA,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // solo viola
+  { INS_SOLO_CELLO,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // solo cello
+  { INS_VIOLIN_SECTION, -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // violin section
+  { INS_VIOLA_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // viola section
+  { INS_CELLO_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // cello section
+  { INS_FULL_STRINGS,   -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // full strings
+  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.9f, 1.15f, 0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // molto vibrato violin
+  { INS_SOLO_CELLO,     ART_LEGATO,    -1,           -1, 1.7f, 0.8f,  0.6f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // romantic cello
+  { INS_VIOLIN_SECTION, ART_DETACHE,   -1,            1, 0.5f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.0f, 0.0f, 0.0f },  // tremolo section
+  { INS_VIOLIN_SECTION, ART_LEGATO,    -1,           -1, 0.3f, 1.0f,  0.0f, 2,   1.0f,  0.5f, 1.0f, 1.0f, 0.0f, 0.0f },  // trill section (whole tone)
+  { INS_LOW_STRINGS,    ART_SPICCATO,  LAY_OCTAVES,   0, 0.0f, 1.0f,  0.0f, 0,   3.5f,  0.2f, 0.25f, 2.4f, 0.0f, 0.0f },  // epic ostinato
+  { INS_VIOLIN_SECTION, ART_PONTICELLO,LAY_CLUSTER,   1, 0.2f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.0f, 0.0f, 0.0f },  // suspense
+  { INS_FULL_STRINGS,   ART_MARTELE,   LAY_OCTAVES,  -1, 1.6f, 1.1f,  0.0f, 0,   1.4f,  0.6f, 1.0f, 1.0f, 0.0f, 0.0f },  // heroic theme
+  { INS_FULL_STRINGS,   ART_LEGATO,    -1,           -1, 1.4f, 0.95f, 1.6f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // emotional swell
+  { INS_VIOLIN_SECTION, ART_TASTO,     LAY_OCTAVES,  -1, 0.7f, 0.75f, 2.2f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 0.0f, 0.0f },  // shimmer
+  // experimental
+  { INS_SOLO_CELLO,     -1,            -1,           -1, 0.3f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.0f, 1.0f, 0.0f },  // overpressure (ALF)
+  { INS_VIOLIN_SECTION, -1,            LAY_UNISON,   -1, 0.25f,1.0f,  1.0f, 0,   1.0f,  1.2f, 1.0f, 1.0f, 0.0f, 2.0f },  // Threnody swarm
 };
 
 // noise transient per articulation: bow scratch at the start of a stroke,
@@ -193,6 +212,8 @@ struct StrVoice {
   float bowLen;                   // this player's bow (seconds at normal speed)
   uint32_t turn;                  // samples left in a bow change
   float slip;                     // last friction state (0 = stick, 1 = slip)
+  float alfT;                     // overpressure: time in string periods (0 ... div)
+  float swarmT;                   // this player's place in the swarm cluster (-1 ... 1)
   float tBp1, tBp2;               // band-pass state for the radiated scratch
   uint32_t nrng;                  // own noise generator (bow / rosin noise)
   float ringLoss;                 // string loss per round trip once the bow is off
@@ -410,6 +431,11 @@ static inline void stringsInit(StringsEngine &s) {
     v.vibPrevS = 0.0f; v.fingerLen = v.len;
     v.bowMul = 1.0f; v.bowGain = 1.0f; v.bowUsed = 0.0f; v.bowLen = 3.0f * (0.85f + 0.3f * (0.5f + 0.5f * strRand(s)));
     v.turn = 0; v.slip = 0.0f; v.tBp1 = v.tBp2 = 0.0f;
+    v.alfT = 0.0f;
+    {                                                        // quarter-tone places, spread over the players
+      static const float places[STR_VOICES] = { 0.125f, -0.5f, 0.75f, -1.0f, 0.375f, -0.25f };
+      v.swarmT = places[i];
+    }
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
     v.ringLoss = 0.99f;
     v.hz = 220.0f;
@@ -580,7 +606,7 @@ static inline void stringsControl(StringsEngine &s) {
   const StrModelDef &M = STR_MODELS[s.instrument < MDL_COUNT ? s.instrument : 0];
   const uint8_t ins = M.ins;
   const uint8_t lay = M.layout >= 0 ? (uint8_t)M.layout : (s.layout < LAY_COUNT ? s.layout : 0);
-  const bool solo = (ins == INS_SOLO_VIOLIN || ins == INS_SOLO_CELLO);
+  const bool solo = (ins == INS_SOLO_VIOLIN || ins == INS_SOLO_VIOLA || ins == INS_SOLO_CELLO);
   const bool full = (ins == INS_FULL_STRINGS);
   const bool low  = (ins == INS_LOW_STRINGS);
   const bool divisi = (lay == LAY_DIVISI_MAJOR || lay == LAY_DIVISI_MINOR);
@@ -654,10 +680,11 @@ static inline void stringsControl(StringsEngine &s) {
 
     uint8_t fam;
     int semis;
-    if (solo)      { fam = (ins == INS_SOLO_CELLO) ? FAM_CELLO : FAM_VIOLIN; semis = 0; }
+    if (solo)      { fam = (ins == INS_SOLO_CELLO) ? FAM_CELLO : (ins == INS_SOLO_VIOLA ? FAM_VIOLA : FAM_VIOLIN); semis = 0; }
     else if (full) { fam = STR_FULL_FAMILY[i]; semis = STR_FULL_LAYOUT[lay][i]; }
     else if (low)  { fam = STR_LOW_FAMILY[i];  semis = STR_LOW_LAYOUT[lay][i]; }
-    else           { fam = (ins == INS_CELLO_SECTION) ? FAM_CELLO : FAM_VIOLIN; semis = STR_SECTION_LAYOUT[lay][i]; }
+    else           { fam = (ins == INS_CELLO_SECTION) ? FAM_CELLO : (ins == INS_VIOLA_SECTION ? FAM_VIOLA : FAM_VIOLIN);
+                     semis = STR_SECTION_LAYOUT[lay][i]; }
     if (divisi && !solo && i > 0) semis += pool[s.divisiTone[i] & 7];
     semis += A.semis;
     v.family = fam;
@@ -673,7 +700,16 @@ static inline void stringsControl(StringsEngine &s) {
     strRand(s);
     v.drift += (v.driftTarget - v.drift) * 0.002f;
 
-    float hz = s.rootHz * exp2f((float)semis / 12.0f);
+    float swarmSemis = 0.0f;
+    if (M.swarm > 0.0f) {
+      // Threnody swarm: from the note the players glide apart into a
+      // quarter-tone cluster and back together (cycle ~12 s from every gate)
+      const float t = (float)s.sinceGate / STR_SR;
+      float ph = t / 12.0f; ph -= floorf(ph);
+      const float spread = 0.5f - 0.5f * cosf(6.2831853f * ph);
+      swarmSemis = spread * M.swarm * v.swarmT;
+    }
+    float hz = s.rootHz * exp2f(((float)semis + swarmSemis) / 12.0f);
     while (hz < STR_FAMILY_LOW[fam]) hz *= 2.0f;            // keep it on the instrument
     if (hz > 3500.0f) hz = 3500.0f;
     if (!solo) hz *= v.detune;
@@ -908,7 +944,7 @@ static inline void stringsBody(StringsEngine &s) {
 static inline float stringsTick(StringsEngine &s, bool gate) {
   // ---- gate edges: every player gets a small onset delay in a section
   const StrModelDef &M = s.model;
-  const bool solo = (M.ins == INS_SOLO_VIOLIN || M.ins == INS_SOLO_CELLO);
+  const bool solo = (M.ins == INS_SOLO_VIOLIN || M.ins == INS_SOLO_VIOLA || M.ins == INS_SOLO_CELLO);
   const bool trem = M.trem > 0 ? true : (M.trem == 0 ? false : s.tremolo);
   const float swellK = M.swell > 0 ? 1.0f / (M.swell * STR_SR) : 1.0f;
   // trill: the upper note shortens the string
@@ -957,6 +993,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   }
 
   const float bowMax = (0.03f + 0.20f * s.speed) * s.speedCV;
+  // overpressure: PRESSURE knob picks crunch / octave down / twelfth down;
+  // the weakly driven periods lose level, give it back
+  const int ovrDiv = M.over > 0.0f ? (s.pressure > 0.75f ? 3 : (s.pressure > 0.4f ? 2 : 1)) : 1;
+  const float ovrGain = ovrDiv == 3 ? 3.0f : (ovrDiv == 2 ? 2.3f : 1.0f);
   const StrArticDef &A = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : 0];
   const uint32_t strokeMax = (uint32_t)(A.stroke * STR_SR);
   float famBus[STR_FAMILIES]  = { 0, 0, 0, 0 };   // divisi players
@@ -1027,6 +1067,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // grows with the bow speed
     // finger change while the bow keeps going (legato pitch change): the
     // finger lands with a small tap and the vibrato stops and starts again
+    if (M.swarm > 0.0f) v.fingerLen = v.lenTarget;         // swarm glides: no finger changes
     if (fabsf(v.lenTarget - v.fingerLen) > 0.025f * v.fingerLen) {
       if (v.gate && A.mode == MODE_BOW && v.env > 0.2f) {
         v.tran += 0.10f;                                     // finger tap noise
@@ -1116,6 +1157,20 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // friction: stick while the velocity difference is small, slip above.
       // The accent bites in with extra pressure (martele).
       bv *= 1.0f + 0.04f * vibRel * v.vc;                  // the bow arm moves with the hand
+      if (M.over > 0.0f) {
+        // overpressure (ALF): the heavy bow creaks: it drives one of every
+        // 2 or 3 string periods hard and the others weakly, locked to the
+        // string, so the motion only repeats every 2 / 3 periods (an octave /
+        // an octave + fifth below). PRESSURE knob: < 0.4 crunch only,
+        // 0.4 ... 0.75 octave down, above 0.75 twelfth down
+        const int div = ovrDiv;
+        if (div > 1) {
+          v.alfT += 1.0f / L;
+          if (v.alfT >= (float)div) v.alfT -= (float)div;
+          const float cut = div == 2 ? STR_OVR_FREE : STR_OVR_FREE3;
+          bv *= (v.alfT < 1.0f) ? 1.0f + STR_OVR_GRIP * M.over : 1.0f - cut * M.over;
+        }
+      }
       // the noise comes with the slip: when the string slides under the
       // hair (once per period), not as constant hiss
       const float dv = bv - stringVel + nz * s.bowNoise * (0.35f + 1.6f * v.slip) * (1.0f + 2.5f * roll) * (bv < 0 ? -bv : bv);
@@ -1123,7 +1178,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // in the clean (Helmholtz) range
       float sl = s.slope + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite - 1.2f * (v.vel - 1.0f)
                - 0.6f * (1.0f - v.bowMul);
-      if (sl < 0.6f) sl = 0.6f;
+      if (M.over > 0.0f) {
+        sl -= 0.6f * M.over;                                 // overpressure: heavy bow
+        if (sl < 0.15f) sl = 0.15f;
+      } else if (sl < STR_SL_MIN) sl = STR_SL_MIN;
       float t = dv * sl + 0.001f;
       t = (t < 0 ? -t : t) + 0.75f;
       t = t * t; t = t * t;                                  // ^4
@@ -1163,8 +1221,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     const float tilt = 0.8f * (v.vel - 0.7f) + 0.3f * (v.bowMul - 1.0f);   // fast bow a bit brighter
     const float radiated = bridgeOut + (bridgeOut - v.prevB) * tilt + trHp * 0.06f;
     v.prevB = bridgeOut;
-    if (i == 0) leadBus = radiated * v.gain * v.bowGain;     // force on the bridge
-    else        famBus[v.family] += radiated * v.gain * v.bowGain;
+    if (i == 0) leadBus = radiated * v.gain * v.bowGain * ovrGain;     // force on the bridge
+    else        famBus[v.family] += radiated * v.gain * v.bowGain * ovrGain;
   }
 
   // ---- body + output stage run block-wise in stringsBody(): hand over the
