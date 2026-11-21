@@ -14,6 +14,9 @@
 //                                   divisi major, divisi minor, cluster
 //   - SAMPLE SELECT knob + CV ..... bow pressure
 //   - CLOCK RATE knob ............. bow speed
+//   - diagnose: hold TRIGGER while powering up -> divisi out = CPU load
+//                                   (0 ... +5 V = 0 ... 100 %), trigger out high
+//                                   while the CPU guard has dropped players
 //   - CV IN RATE jack ............. dynamic gate / bow CV: the level (0 ... 8 V)
 //                                   is how hard the bow plays (speed, pressure,
 //                                   accent, scratch, vibrato); also a gate
@@ -38,7 +41,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.14.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.15.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -61,6 +64,11 @@ static void seqStep(uint16_t change_adc, bool scaleB);
 #include "strings_engine.h" // bowed strings physical model (v2)
 StringsEngine strings;
 volatile bool strings_cv_bow = false;     // CV IN RATE patched and above ~0.25 V
+// Diagnose mode (hold the TRIGGER button while powering up): the divisi
+// output gives the CPU load as a voltage (0 ... +5 V = 0 ... 100 %), the
+// trigger out is high while the CPU guard has dropped players
+volatile bool  diag_mode = false;
+volatile float diag_load = 0.0f;           // peak load, falls back in ~0.5 s
 /*
 
 PA22 RandomOut    PWM Out ?
@@ -306,6 +314,8 @@ void setup() {
   pinMode(PB17,INPUT_PULLUP); // BIT: bow gate
   pinMode(PB16,INPUT_PULLUP); // Manual Trigger
   pinMode(PB23,INPUT_PULLUP); // Manual Trigger
+  delay(20);                                  // let the pull-ups settle
+  diag_mode = !(PORT->Group[PORTB].IN.reg & (1ul << 16));   // TRIGGER button held at power-up
   
 
   // create Time for AudioSamples
@@ -523,13 +533,19 @@ void renderAudio() {
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
     DAC->DATA[1].reg = (uint16_t)dl;            // SAMPLE OUT
     {
-      int32_t d2 = (int32_t)(SEQ_CV_ZERO_CODE + strings.outDivisi * EURO_5V_CODES);
+      // diagnose mode: CPU load as a voltage instead of the divisi audio
+      const float o2 = diag_mode ? diag_load : strings.outDivisi;
+      int32_t d2 = (int32_t)(SEQ_CV_ZERO_CODE + o2 * EURO_5V_CODES);
       if(d2 < 0) d2 = 0;  if(d2 > 4095) d2 = 4095;
       DAC->DATA[0].reg = (uint16_t)d2;          // noise side DAC out: divisi players only
     }
 
     // trigger out (PA22, former digital noise out): 5 ms when the divisi changes
-    if(seq_trig_ticks){
+    if(diag_mode){
+      // diagnose mode: high while the CPU guard runs fewer than 6 players
+      if(strings.maxVoices < STR_VOICES) PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
+      else                               PORT->Group[PORTA].OUTCLR.reg = 1ul << 22;
+    } else if(seq_trig_ticks){
       seq_trig_ticks--;
       PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
     } else {
@@ -546,6 +562,8 @@ void renderAudio() {
     static uint32_t calm = 0;
     const uint32_t budget = (uint32_t)(F_CPU / samplerate);
     const uint32_t load = isr_dt;
+    const float l = (float)isr_dt / (float)budget;            // for the diagnose output
+    diag_load = l > diag_load ? l : diag_load * 0.99996f;
     if(load > budget * 9 / 10){
       if(strings.maxVoices > 3) strings.maxVoices--;
       calm = 0;

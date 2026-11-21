@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.14.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.15.0-beta.uf2`
 
 ## Concept
 
@@ -30,6 +30,17 @@ the former squares sequencer now drive the **generative divisi**.
 | noise side DAC out | divisi players only (players 2 ... 6) as strings, +-5 V; with SAMPLE OUT usable as a stereo pair |
 | PA22 (digital noise out) | 5 ms trigger when the divisi changes |
 | square outputs 1 ... 6 | each player's note as a square wave while it sounds (synth layer following the divisi) |
+
+## Diagnose mode (CPU load without a computer)
+
+Hold the TRIGGER button while powering up (or plugging in USB); it stays on
+until the next power-up:
+- the divisi output (noise-side DAC) gives the **CPU load** of the audio
+  interrupt as a voltage: 0 ... +5 V = 0 ... 100 % (+4.5 V = 90 %, where the
+  guard starts dropping players); peak value, falls back in ~0.5 s;
+- the trigger out is **high while the CPU guard runs fewer than 6 players**
+  (patch an LED / gate input).
+SAMPLE OUT plays normally.
 
 ## Dynamic gates
 
