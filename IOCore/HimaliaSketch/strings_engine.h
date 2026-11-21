@@ -1106,7 +1106,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // bow speed: direction, articulation accent; tremolo = fast strokes
       // Up- and down-bow are not identical: a slight speed/pressure bias
       // gives each stroke a different bite without changing its pitch or timing.
-      const float bowDirection = (v.dir > 0.0f) ? 1.025f : 0.975f;
+      const float bowDirection = (v.dir > 0.0f) ? 1.005f : 0.995f;
       float bv = bowMax * A.speed * v.speedScale * v.env * v.swell * (1.0f + v.accent)
                * v.dir * v.bowMul * bowDirection;
       // long notes: when the bow runs out the player changes bow: slows down,
@@ -1158,7 +1158,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       const float dv = bv - stringVel + nz * s.bowNoise * (0.35f + 1.6f * v.slip) * (1.0f + 2.5f * roll) * (bv < 0 ? -bv : bv);
       // the same bow force on a slower bow presses relatively harder: keep it
       // in the clean (Helmholtz) range
-      const float bowPressure = (v.dir > 0.0f) ? 0.99f : 1.01f;
+      const float bowPressure = (v.dir > 0.0f) ? 0.998f : 1.002f;
       float sl = (s.slope * v.slMul + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite
                 - 0.6f * (v.vel - 1.0f)) * bowPressure;
       if (M.over > 0.0f) {

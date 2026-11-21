@@ -102,15 +102,15 @@ int main() {
     const float before = s.v[0].len;
     const float target = s.v[0].lenTarget;
     if (model == 0 && std::fabs(s.v[0].hz - fractionalHz) > 1.0f) {
-      std::printf("FAIL fractional pitch CV was quantized: %.3f vs %.3f\\n", s.v[0].hz, fractionalHz); ++fails;
+      std::printf("FAIL fractional pitch CV was quantized: %.3f vs %.3f\n", s.v[0].hz, fractionalHz); ++fails;
     }
     stringsTick(s, true);
     if (std::fabs(s.v[0].len - target) >= std::fabs(before - target) ||
         std::fabs(s.v[0].len - target) < 0.005f * std::fabs(before - target)) {
-      std::printf("FAIL model %d legato slide snapped or moved in wrong direction\\n", model); ++fails;
+      std::printf("FAIL model %d legato slide snapped or moved in wrong direction\n", model); ++fails;
     }
     if (!render(true, 40000, x) || std::fabs(s.v[0].len - s.v[0].lenTarget) > 0.5f) {
-      std::printf("FAIL model %d legato slide did not settle smoothly\\n", model); ++fails;
+      std::printf("FAIL model %d legato slide did not settle smoothly\n", model); ++fails;
     }
   }
 
@@ -225,15 +225,15 @@ int main() {
     bool onGrid = false;
     for (int k = 0; k < 12; ++k)
       if (std::fabs(strokeHz - beatHz * mult[k]) < 0.03f) onGrid = true;
-    if (!onGrid) { std::printf("FAIL tremolo strokes off BPM grid: %.3f Hz at %.1f BPM\\n", strokeHz, beatHz * 60.0f); ++fails; }
+    if (!onGrid) { std::printf("FAIL tremolo strokes off BPM grid: %.3f Hz at %.1f BPM\n", strokeHz, beatHz * 60.0f); ++fails; }
     const float phase = s.v[0].tremPh;
     s.rootHz = 523.25f; stringsControl(s);
     if (std::fabs(s.v[0].tremPh - phase) > 1e-6f) {
-      std::printf("FAIL pitch update reset tremolo phase\\n"); ++fails;
+      std::printf("FAIL pitch update reset tremolo phase\n"); ++fails;
     }
     const float expectedInc = s.tremHz / STR_SR;
     if (std::fabs(s.v[0].tremInc - expectedInc) > 1e-8f) {
-      std::printf("FAIL tremolo increment no longer matches synced subdivision\\n"); ++fails;
+      std::printf("FAIL tremolo increment no longer matches synced subdivision\n"); ++fails;
     }
   }
 
