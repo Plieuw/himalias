@@ -62,6 +62,7 @@ struct StringsEngine {
   float vibratoPhase;
   float vibratoRate;
   float gateEnv;
+  float dcState;
   float outputLevel;
   uint8_t instrument;
   uint8_t chord;
@@ -99,6 +100,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.vibratoPhase = 0.0f;
   s.vibratoRate = 5.2f;
   s.gateEnv = 0.0f;
+  s.dcState = 0.0f;
   s.outputLevel = 0.20f;
   s.instrument = STR_VIOLIN;
   s.chord = STR_UNISON;
@@ -242,7 +244,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   }
   const float dry = mix * 0.35f;
   const float out = dry + bodyOut * 0.18f;
-  return strSoftClip(out * s.outputLevel);
+  // Remove the bow model's static operating-point offset before the DAC.
+  s.dcState += (out - s.dcState) * 0.0005f;
+  return strSoftClip((out - s.dcState) * s.outputLevel);
 }
 
 // Clear delay/body state when changing instrument or patch mode.
@@ -256,4 +260,5 @@ static inline void stringsClear(StringsEngine &s) {
   for (int i = 0; i < STR_BODY_MODES; ++i)
     s.body[i].y1 = s.body[i].y2 = 0.0f;
   s.gateEnv = 0.0f;
+  s.dcState = 0.0f;
 }
