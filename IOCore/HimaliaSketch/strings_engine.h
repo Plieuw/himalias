@@ -214,6 +214,14 @@ struct StrVoice {
   float slip;                     // last friction state (0 = stick, 1 = slip)
   float alfT;                     // overpressure: time in string periods (0 ... div)
   float swarmT;                   // this player's place in the swarm cluster (-1 ... 1)
+  // note off: the released note keeps its pitch; the bow stops on the string
+  // (short notes) or lifts off (long notes); later the finger lifts
+  float lenNext, ringNext, openNext;   // targets for the next note (from control)
+  float openLen;                  // open string under this note (finger lifted)
+  float relK;                     // release speed of the bow
+  uint32_t relN;                  // samples since the release
+  bool relStop;                   // bow stops on the string (damped) instead of lifting
+  bool fingerOff;
   float tBp1, tBp2;               // band-pass state for the radiated scratch
   uint32_t nrng;                  // own noise generator (bow / rosin noise)
   float ringLoss;                 // string loss per round trip once the bow is off
@@ -432,6 +440,8 @@ static inline void stringsInit(StringsEngine &s) {
     v.bowMul = 1.0f; v.bowGain = 1.0f; v.bowUsed = 0.0f; v.bowLen = 3.0f * (0.85f + 0.3f * (0.5f + 0.5f * strRand(s)));
     v.turn = 0; v.slip = 0.0f; v.tBp1 = v.tBp2 = 0.0f;
     v.alfT = 0.0f;
+    v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = 0.0f;
+    v.relK = 0.00035f; v.relN = 0; v.relStop = false; v.fingerOff = false;
     {                                                        // quarter-tone places, spread over the players
       static const float places[STR_VOICES] = { 0.125f, -0.5f, 0.75f, -1.0f, 0.375f, -0.25f };
       v.swarmT = places[i];
@@ -718,8 +728,21 @@ static inline void stringsControl(StringsEngine &s) {
     // loop length minus the delay of the bridge filter and the junction
     float len = STR_SR / hz - strLpDelay(s.bridgeK, hz) - s.lenComp;
     // ring-out after the bow / pluck: the same time for every note
-    v.ringLoss = powf(0.001f, 1.0f / (A.ring * M.ring * (s.mute ? 0.6f : 1.0f) * hz));
-    v.lenTarget = strClamp(len, 8.0f, (float)(STR_NECK_LEN - 8));
+    v.ringNext = powf(0.001f, 1.0f / (A.ring * M.ring * (s.mute ? 0.6f : 1.0f) * hz));
+    v.lenNext = strClamp(len, 8.0f, (float)(STR_NECK_LEN - 8));
+    {                                                        // the open string below this note
+      static const float OPEN[STR_FAMILIES][4] = {
+        { 196.0f, 293.66f, 440.0f, 659.26f }, { 130.81f, 196.0f, 293.66f, 440.0f },
+        { 65.41f, 98.0f, 146.83f, 220.0f },   { 41.2f, 55.0f, 73.42f, 98.0f } };
+      float oh = 0.0f;
+      for (int k = 0; k < 4; k++) if (OPEN[fam][k] * (solo ? 1.0f : v.detune) <= hz * 0.97f) oh = OPEN[fam][k] * (solo ? 1.0f : v.detune);
+      v.openNext = oh > 0.0f ? strClamp(STR_SR / oh - strLpDelay(s.bridgeK, oh) - s.lenComp, 8.0f, (float)(STR_NECK_LEN - 8)) : 0.0f;
+    }
+    // while a note is released it keeps its pitch (a sequencer may already
+    // be on the next note); the next gate takes the new one
+    if (v.gate || v.relN > (uint32_t)(3.0f * STR_SR)) {
+      v.lenTarget = v.lenNext; v.ringLoss = v.ringNext; v.openLen = v.openNext;
+    }
 
     // family balance in the full section; high notes lose level in the
     // short string loop, give them some back
@@ -1011,8 +1034,19 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     if (v.onset) v.onset--;
     else if (v.gate != gate) {
       v.gate = gate;
-      if (!gate && v.env > 0.1f && A.mode == MODE_BOW) v.tran += 0.12f;   // bow lifts off
+      if (!gate) {
+        v.relN = 0;
+        // short notes (fast tempo) and martele: the bow stops on the string,
+        // a short bite and the string is damped; long notes: the bow lifts
+        // off with a whisper, the string rings on, slower taper for longer notes
+        v.relStop = A.mode == MODE_BOW && (s.noteDur < 0.35f || s.articEff == ART_MARTELE);
+        const float tau = v.relStop ? 0.015f : strClamp(0.04f + 0.06f * s.noteDur, 0.05f, 0.18f);
+        v.relK = 1.0f / (tau * STR_SR);
+        if (v.env > 0.1f && A.mode == MODE_BOW) v.tran += v.relStop ? 0.09f : 0.05f;
+      }
       if (gate) {
+        v.fingerOff = false;
+        v.lenTarget = v.lenNext; v.ringLoss = v.ringNext; v.openLen = v.openNext;
         const bool continuing = A.legato && v.env > 0.05f;    // legato: same bow
         if (continuing) v.tran += 0.15f;                      // finger / bow change noise
         if (!continuing) {
@@ -1059,7 +1093,18 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     bool bowing = v.gate && A.mode == MODE_BOW;
     if (bowing && strokeMax && v.strokeN > strokeMax) bowing = false;
     if (bowing) v.env += (1.0f - v.env) * A.attack;
-    else        v.env -= v.env * (strokeMax ? 0.004f : 0.00035f);   // short strokes lift fast
+    else        v.env -= v.env * (strokeMax ? 0.004f : v.relK);     // short strokes lift fast
+    if (!v.gate) {
+      if (v.relN < 0xFFFFFFF0u) v.relN++;
+      // after a lifted long note the finger comes off: the string still
+      // rings a little, now as the open string, with a tiny tap
+      if (!v.fingerOff && !v.relStop && A.mode == MODE_BOW && v.relN == (uint32_t)(0.18f * STR_SR)
+          && v.openLen > v.len * 1.03f) {
+        v.fingerOff = true;
+        v.len = v.lenTarget = v.fingerLen = v.openLen;
+        v.tran += 0.03f;
+      }
+    }
     v.accent *= A.accentDecay;
     v.swell += (1.0f - v.swell) * swellK;
 
@@ -1091,7 +1136,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     const float vk = v.vibK * v.jitR * v.vibWarm;
     v.vs += vk * v.vc;
     v.vc -= vk * v.vs;
-    const float vibTarget = (s.vibrato && v.gate && A.mode == MODE_BOW && !v.vibDelay)
+    const float vibTarget = (s.vibrato && (v.gate || (v.env > 0.05f && !v.fingerOff)) && A.mode == MODE_BOW && !v.vibDelay)
                           ? v.vibDepth * (0.6f + 0.4f * s.speed) * (0.75f + 0.25f * v.vel)
                             * v.jitD * (0.4f + 0.6f * v.vibWarm) : 0.0f;
     v.vibAmt += (vibTarget - v.vibAmt) * 0.00007f;
@@ -1118,13 +1163,17 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // reflections: lossy, inverting bridge; rigid, inverting nut. Once the
     // bow is off the string it rings on a little (less loss)
     v.lp += (bridgeOut - v.lp) * s.bridgeK;
-    const float loss = (v.env > 0.02f) ? s.loss : v.ringLoss;
+    float loss = (v.env > 0.02f) ? s.loss : v.ringLoss;
+    if (!v.gate && v.relStop && v.ringLoss > 0.8f) loss = (v.env > 0.3f) ? s.loss : 0.8f;   // bow resting on the string
     const float bridgeRefl = -v.lp * loss;
     const float nutRefl    = -neckOut;
     const float stringVel  = bridgeRefl + nutRefl;
 
     float newVel = 0.0f;
-    if (bowing || v.env > 0.001f) {
+    // the bow stays on the string after a stop (it damps), and is lifted off
+    // after a lift: then the contact (grip) goes away, not just the speed
+    const bool resting = !v.gate && v.relStop && v.relN < (uint32_t)(0.5f * STR_SR);
+    if (bowing || v.env > 0.001f || resting) {
       // bow speed: direction, articulation accent; tremolo = fast strokes
       float bv = bowMax * A.speed * v.speedScale * v.env * v.swell * (1.0f + v.accent) * v.dir * v.bowMul;
       // long notes: when the bow runs out the player changes bow: slows down,
@@ -1188,6 +1237,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       float f = 1.0f / t;
       if (f > 1.0f) f = 1.0f;
       newVel = dv * f;
+      if (!v.gate && !v.relStop && A.mode == MODE_BOW) newVel *= strClamp(v.env * 4.0f, 0.0f, 1.0f);   // lifting off
       v.slip += ((1.0f - f) - v.slip) * 0.5f;
     }
     if (v.pluck) {                                           // pizzicato / col legno pulse

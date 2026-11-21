@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.11.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.12.0-beta.uf2`
 
 ## Concept
 
@@ -89,6 +89,19 @@ playing without a clock: a slow bow). With it:
   player has their own bow length): the player slows down, turns with a small
   scratch and speeds up again (~90 ms, about -7 dB dip). In a section the
   players change bow at different moments, as real sections do.
+
+## Note off (v1.12)
+
+- The released note **keeps its pitch** until the next gate (a sequencer may
+  already be on the next note; the ringing string no longer slides along).
+- **Stop or lift**, from the tempo: short notes (< 0.35 s between gates) and
+  martele: the bow **stops on the string**: a short bite, the bow keeps
+  resting and damps the string (~-20 ... -40 dB after 120 ms). Long notes: the
+  bow **lifts off**: its grip goes away (not just its speed), a soft whisper,
+  the string rings on; the taper takes 50 ... 180 ms, longer for longer notes.
+- Vibrato carries on while the note fades.
+- **Finger lift**: 0.18 s after a lifted note the finger comes off the string:
+  what still rings continues as the open string below it, with a tiny tap.
 
 ## Noise (v1.10)
 
