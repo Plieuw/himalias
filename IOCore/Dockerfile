@@ -8,14 +8,12 @@ git clone https://github.com/microsoft/uf2 && \
 curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=/usr/local/bin sh && \
 arduino-cli core update-index && \
 arduino-cli core install arduino:samd && \
-cd && \ 
-echo "# arduino-cli.yaml" > arduino-cli.yaml && \
-echo "board_manager:" >> arduino-cli.yaml && \
-echo "  additional_urls:" >> arduino-cli.yaml && \
-echo "    - https://adafruit.github.io/arduino-board-index/package_adafruit_index.json" >> arduino-cli.yaml && \
-echo "    - https://noscene.github.io/doppler4arduino/package_doppler_index.json" >> arduino-cli.yaml && \
+arduino-cli config init --overwrite && \
+arduino-cli config add board_manager.additional_urls https://adafruit.github.io/arduino-board-index/package_adafruit_index.json && \
+arduino-cli config add board_manager.additional_urls https://noscene.github.io/doppler4arduino/package_doppler_index.json && \
 arduino-cli core update-index && \
-arduino-cli core install arduino:samd dadamachines_doppler:samd && \
+arduino-cli core install arduino:samd && \
+arduino-cli core install dadamachines_doppler:samd && \
 arduino-cli board listall && \
 cd /root/.arduino15/packages/dadamachines_doppler/hardware/samd/1.2.9 && \
 echo "Himalia.name= Himalia (SAMD51)" >> boards.txt && \
