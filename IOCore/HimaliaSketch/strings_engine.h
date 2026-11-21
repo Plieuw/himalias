@@ -164,7 +164,7 @@ static inline void stringsControl(StringsEngine &s, float rootHz,
                                   float vibratoDepth, float vibratoRate) {
   s.rootHz = strClamp(rootHz, 28.0f, 1800.0f);
   s.ensemble = ensemble;
-  s.chord = chord < 6 ? chord : STR_UNISON;
+  s.chord = chord < 6 ? chord : (uint8_t)STR_UNISON;
   s.voiceCount = ensemble ? STR_VOICES : 1;
   s.bowSpeed = strClamp(bowSpeed, 0.02f, 1.0f);
   s.bowPressure = strClamp(bowPressure, 0.02f, 1.0f);
@@ -195,7 +195,6 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
                (gate ? 0.00075f : 0.00018f);
   s.vibratoPhase += s.vibratoRate / STR_SR;
   if (s.vibratoPhase >= 1.0f) s.vibratoPhase -= 1.0f;
-  const float vib = sinf(6.28318530718f * s.vibratoPhase) * s.vibratoDepth;
   float mix = 0.0f;
 
   for (int i = 0; i < STR_VOICES; ++i) {
@@ -203,7 +202,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     if (!v.active) continue;
 
     const float voiceVib = sinf(6.28318530718f * (s.vibratoPhase + (float)i * 0.13f)) * s.vibratoDepth;
-    const float modulatedLength = v.delayLength * exp2f(-voiceVib);\n    float rp = (float)v.write - modulatedLength;
+    const float modulatedLength = v.delayLength * exp2f(-voiceVib);
+    float rp = (float)v.write - modulatedLength;
     if (rp < 0.0f) rp += STR_DELAY_SIZE;
     const uint32_t i0 = ((uint32_t)rp) & (STR_DELAY_SIZE - 1);
     const uint32_t i1 = (i0 + 1) & (STR_DELAY_SIZE - 1);
