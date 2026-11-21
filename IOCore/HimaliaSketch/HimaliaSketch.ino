@@ -1,15 +1,15 @@
 //
-//  Himalia firmware -- resonator version
+//  Himalia firmware -- bowed strings beta
 //
-//  SAMPLE OUT is a physical-modelling resonator (see resonators.h):
-//   - RATCHET knob + CV ........... model: string, bar, bell/glass, drum, wind
-//   - SAMPLE TUNE knob + CV ....... pitch (knob 7 octaves, CV 1 V/oct, -10 ... +10 V)
-//   - SAMPLE SELECT knob + CV ..... timbre (mallet / brightness / bell<->glass / flute<->brass)
-//   - TRIGGER in / button ......... strike; wind blows while the gate is held
-//   - A/B button (sample side) .... decay short / long
-//   - BIT switch .................. bow / blow: excite continuously while the gate is held
-//   - CV IN RATE jack ............. external audio that excites the resonator
-//   - CLOCK RATE knob ............. wavefolder after the resonator: clean ... 6 folds
+//  SAMPLE OUT is a mono bowed-string model:
+//   - SAMPLE TUNE knob + CV ....... root pitch, CV is 1 V/oct
+//   - A/B button .................. violin / cello
+//   - RATCHET knob ................ solo / unison / octaves / fifths / major / minor / sus4
+//   - SAMPLE SELECT knob + CV ..... bow pressure
+//   - CLOCK RATE knob ............. bow speed
+//   - TRIGGER input / BIT switch .. bow gate
+//
+//  The six square outputs and their generative sequencer remain available.
 //
 //  The 6 squares are a generative sequencer (Turing machine style):
 //   - clock: SAMPLE TRIGGER in / button, every trigger is one step
@@ -301,12 +301,12 @@ void setup() {
 
   zt4.setPeriodMatch(125, 250, 0); // 1 match, channel 0
   zt4.setCallback(true, TC_CALLBACK_CC_CHANNEL0, renderAudio);  // set DAC in the callback
-  zt4.enable(true);
 
   seqStep(0, false);   // start the squares with a defined pattern
   stringsInit(strings);
   stringsSetInstrument(strings, (PORT->Group[PORTA].IN.reg & (1ul << 20)) ? STR_VIOLIN : STR_CELLO);
   stringsControl(strings, 220.0f, false, STR_UNISON, 0.35f, 0.45f, 0.0018f, 5.2f);
+  zt4.enable(true);
 }
 
 //
