@@ -2,7 +2,7 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.9.0-beta.uf2`
+Firmware: `firmware/Himalia_strings_v1.10.0-beta.uf2`
 
 ## Concept
 
@@ -75,6 +75,30 @@ through the body (highpassed).
 
 After the bow leaves the string it rings on (per articulation, the same time
 for every note); con sordino shortens that.
+
+## Bowing on the tempo (v1.10)
+
+Players bow according to the note length: the time between the last gates
+(from the rhythm, see Tempo) sets the bow speed of every new note: 0.6 s =
+normal, shorter notes up to 1.6x faster, longer notes down to 0.6x (free
+playing without a clock: a slow bow). With it:
+- a fast bow plays a bit further from the bridge, is ~+2 dB louder and a bit
+  brighter; a slow bow plays closer to the bridge, ~-1 dB, with a little
+  more grip (stable Helmholtz motion up to the top of the range);
+- **bow changes**: on long notes the bow runs out (about 4 ... 6 s, every
+  player has their own bow length): the player slows down, turns with a small
+  scratch and speeds up again (~90 ms, about -7 dB dip). In a section the
+  players change bow at different moments, as real sections do.
+
+## Noise (v1.10)
+
+The rosin noise now comes with the slip: most of it while the string slides
+under the hair (once per period, ~25 % of it), so it is part of the tone
+instead of a constant hiss. The scratch at the start of a stroke goes more
+into the string and the part heard directly is band-passed (~1.5 ... 6 kHz,
+hair on rosin) instead of highpassed white noise. Measured: harmonics-to-
+noise ~35 -> ~43 dB (median over the violin range): cleaner sustain, noise
+where the bow does something.
 
 ## Vibrato and the noises around it
 

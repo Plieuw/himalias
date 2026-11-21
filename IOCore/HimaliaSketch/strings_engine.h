@@ -185,6 +185,15 @@ struct StrVoice {
   float tremPrev;                 // previous tremolo stroke sign
   float vel;                      // this note's velocity (from the dynamic gate)
   float prevB;                    // previous bridge output (brightness tilt)
+  // bowing like a player: bow speed from the note length (tempo), bow
+  // position and pressure follow it, long notes need bow changes
+  float bowMul;                   // bow speed for this note (1 = normal)
+  float bowGain;                  // level for this bow speed (slow softer, fast louder)
+  float bowUsed;                  // part of the bow used (1 = at the tip / frog)
+  float bowLen;                   // this player's bow (seconds at normal speed)
+  uint32_t turn;                  // samples left in a bow change
+  float slip;                     // last friction state (0 = stick, 1 = slip)
+  float tBp1, tBp2;               // band-pass state for the radiated scratch
   uint32_t nrng;                  // own noise generator (bow / rosin noise)
   float ringLoss;                 // string loss per round trip once the bow is off
   float hz;                       // this player's note (for the square outputs)
@@ -262,6 +271,7 @@ struct StringsEngine {
   float transient;                // noise transient amount (1 = normal)
   float air;                      // "air" band amount (top octave lift)
   float velocity;                 // dynamic gate level (1 = normal), sampled per note
+  float noteDur;                  // expected note length (s): time between the last gates
   // tempo from the gates: vibrato and tremolo lock to it
   uint32_t sinceGate;             // samples since the last gate start
   uint32_t clockPeriod;           // samples per beat (0 = no clock)
@@ -398,6 +408,8 @@ static inline void stringsInit(StringsEngine &s) {
     v.tran = 0.0f; v.tranHp = 0.0f; v.tremPrev = 1.0f; v.vel = 1.0f; v.prevB = 0.0f;
     v.vibDelay = 0; v.vibWarm = 1.0f; v.jitR = v.jitRT = v.jitD = v.jitDT = 1.0f;
     v.vibPrevS = 0.0f; v.fingerLen = v.len;
+    v.bowMul = 1.0f; v.bowGain = 1.0f; v.bowUsed = 0.0f; v.bowLen = 3.0f * (0.85f + 0.3f * (0.5f + 0.5f * strRand(s)));
+    v.turn = 0; v.slip = 0.0f; v.tBp1 = v.tBp2 = 0.0f;
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
     v.ringLoss = 0.99f;
     v.hz = 220.0f;
@@ -412,6 +424,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.transient = 1.0f;
   s.air = STR_AIR_DEFAULT;
   s.velocity = 1.0f;
+  s.noteDur = 1.2f;
   s.sinceGate = (uint32_t)(5.0f * STR_SR); s.clockPeriod = 0;   // the first gate counts too
   s.now = 0; s.onW = 0; s.onN = 0; s.onCount = 0; s.onSeen = 0;
   s.pulse = 0; s.patLen = 0; s.patPulses = 0; s.beatCand = 0; s.vibHz = 0; s.tremHz = 6.5f;
@@ -916,6 +929,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   if (s.sinceGate < 0xFFFFFFF0u) s.sinceGate++;
   if (gate && !s.gatePrev && s.sinceGate > (uint32_t)(0.03f * STR_SR)) {   // ignore bounces < 30 ms
     if (s.sinceGate > (uint32_t)(3.0f * STR_SR)) s.onN = 0;               // long pause: new rhythm
+    // note length for the bowing: the last interval; free playing = slow bow
+    s.noteDur = s.sinceGate < (uint32_t)(3.0f * STR_SR) ? (float)s.sinceGate / STR_SR : 1.2f;
     s.sinceGate = 0;
     s.onT[s.onW] = s.now; s.onV[s.onW] = s.velocity;
     s.onW = (uint8_t)((s.onW + 1) % STR_ONSETS);
@@ -963,6 +978,13 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         if (!continuing) {
           v.strokeN = 0;
           v.vel = strClamp(s.velocity, 0.0f, 1.3f);             // dynamic gate: how hard this note
+          // bow speed from the note length: short notes (fast tempo) fast bow,
+          // long notes slow bow (0.6 s = normal)
+          v.bowMul = strClamp(sqrtf(0.6f / strClamp(s.noteDur, 0.05f, 4.0f)), 0.6f, 1.6f);
+          v.bowUsed = 0.0f; v.turn = 0;
+          // the string alone gives a slow bow more level than a player would:
+          // slow ~-2 dB, fast ~+2 dB against a normal bow (measured)
+          v.bowGain = v.bowMul < 1.0f ? 1.0f - 0.96f * (1.0f - v.bowMul) : 1.0f;
           v.accent = A.accent * M.accent * (0.4f + 0.6f * v.vel);
           v.swell = M.swell > 0 ? 0.15f : 1.0f;               // swell: start soft
           // noise transient: scratch / snap / click, a bit different every time
@@ -1042,7 +1064,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     const float L = v.len * (1.0f + v.vibAmt * vibShape) * (trillUp ? trillRatio : 1.0f);
 
     // bow position splits the string: bridge side beta, nut side 1 - beta
-    float beta = s.beta;
+    // slow bow plays closer to the bridge, fast bow further away
+    float beta = s.beta * (0.8f + 0.2f * v.bowMul);
     float lb = L * beta;
     if (lb > (float)(STR_BRIDGE_LEN - 4)) lb = (float)(STR_BRIDGE_LEN - 4);
     if (lb < 1.5f) lb = 1.5f;
@@ -1062,7 +1085,21 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     float newVel = 0.0f;
     if (bowing || v.env > 0.001f) {
       // bow speed: direction, articulation accent; tremolo = fast strokes
-      float bv = bowMax * A.speed * v.speedScale * v.env * v.swell * (1.0f + v.accent) * v.dir;
+      float bv = bowMax * A.speed * v.speedScale * v.env * v.swell * (1.0f + v.accent) * v.dir * v.bowMul;
+      // long notes: when the bow runs out the player changes bow: slows down,
+      // turns (scratch) and speeds up again, ~90 ms. Every player has their
+      // own bow length, so a section changes bow at different moments
+      if (bowing && !trem && !strokeMax) {
+        v.bowUsed += v.bowMul * (0.4f + 0.6f * s.speed) * v.env / (v.bowLen * STR_SR);
+        if (v.bowUsed >= 1.0f && !v.turn) { v.turn = (uint32_t)(0.09f * STR_SR); v.bowUsed = 0.0f; }
+      }
+      if (v.turn) {
+        const uint32_t T = (uint32_t)(0.09f * STR_SR), half = T / 2;
+        const float x = (float)v.turn / (float)T;                       // 1 -> 0
+        bv *= 0.3f + 0.7f * fabsf(cosf(3.14159265f * x));               // slow down, turn, speed up
+        if (v.turn == half) { v.dir = -v.dir; v.tran += 0.22f * (0.5f + 0.5f * v.vel); }
+        v.turn--;
+      }
       if (trem) {
         v.tremPh += v.tremInc;
         if (v.tremPh >= 1.0f) v.tremPh -= 1.0f;
@@ -1079,8 +1116,13 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // friction: stick while the velocity difference is small, slip above.
       // The accent bites in with extra pressure (martele).
       bv *= 1.0f + 0.04f * vibRel * v.vc;                  // the bow arm moves with the hand
-      const float dv = bv - stringVel + nz * s.bowNoise * (1.0f + 2.5f * roll) * (bv < 0 ? -bv : bv);
-      float sl = s.slope + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite - 1.2f * (v.vel - 1.0f);
+      // the noise comes with the slip: when the string slides under the
+      // hair (once per period), not as constant hiss
+      const float dv = bv - stringVel + nz * s.bowNoise * (0.35f + 1.6f * v.slip) * (1.0f + 2.5f * roll) * (bv < 0 ? -bv : bv);
+      // the same bow force on a slower bow presses relatively harder: keep it
+      // in the clean (Helmholtz) range
+      float sl = s.slope + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite - 1.2f * (v.vel - 1.0f)
+               - 0.6f * (1.0f - v.bowMul);
       if (sl < 0.6f) sl = 0.6f;
       float t = dv * sl + 0.001f;
       t = (t < 0 ? -t : t) + 0.75f;
@@ -1088,6 +1130,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       float f = 1.0f / t;
       if (f > 1.0f) f = 1.0f;
       newVel = dv * f;
+      v.slip += ((1.0f - f) - v.slip) * 0.5f;
     }
     if (v.pluck) {                                           // pizzicato / col legno pulse
       if (v.pluckN < v.pluckLen) {
@@ -1104,7 +1147,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       const float nz = (float)(int32_t)v.nrng * (1.0f / 2147483648.0f);
       tr = nz * v.tran * s.transient;
       v.tran *= (A.mode == MODE_STRIKE) ? 0.990f : 0.9982f;  // wood click shorter
-      newVel += tr * 0.04f;
+      newVel += tr * 0.06f;
     }
     v.neck[v.nw]   = bridgeRefl + newVel;
     v.bridge[v.bw] = nutRefl + newVel;
@@ -1112,14 +1155,16 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     v.bw = (v.bw + 1) & (STR_BRIDGE_LEN - 1);
 
     // radiated transient: highpassed so it is a scratch, not a thump
-    const float trHp = tr - v.tranHp;
-    v.tranHp += (tr - v.tranHp) * 0.15f;
+    // radiated scratch: band-passed (~1.5 ... 6 kHz) like hair on rosin, not hiss
+    v.tranHp += (tr - v.tranHp) * 0.55f;                    // lowpass ~6 kHz
+    v.tBp1 += (v.tranHp - v.tBp1) * 0.18f;                  // minus lowpass ~1.5 kHz
+    const float trHp = v.tranHp - v.tBp1;
     // louder notes sound brighter: tilt the radiated sound with the velocity
-    const float tilt = 0.8f * (v.vel - 0.7f);
-    const float radiated = bridgeOut + (bridgeOut - v.prevB) * tilt + trHp * 0.10f;
+    const float tilt = 0.8f * (v.vel - 0.7f) + 0.3f * (v.bowMul - 1.0f);   // fast bow a bit brighter
+    const float radiated = bridgeOut + (bridgeOut - v.prevB) * tilt + trHp * 0.06f;
     v.prevB = bridgeOut;
-    if (i == 0) leadBus = radiated * v.gain;                 // force on the bridge
-    else        famBus[v.family] += radiated * v.gain;
+    if (i == 0) leadBus = radiated * v.gain * v.bowGain;     // force on the bridge
+    else        famBus[v.family] += radiated * v.gain * v.bowGain;
   }
 
   // ---- body + output stage run block-wise in stringsBody(): hand over the
