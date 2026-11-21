@@ -132,7 +132,7 @@ static const StrModelDef STR_MODELS[MDL_COUNT] = {
   { INS_SOLO_CELLO,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.798f, 0.0f, 0.0f },  // solo cello
   { INS_VIOLIN_SECTION, -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.807f, 0.0f, 0.0f },  // violin section
   { INS_VIOLA_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.719f, 0.0f, 0.0f },  // viola section
-  { INS_CELLO_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.803f, 0.0f, 0.0f },  // cello section
+  { INS_CELLO_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.780f, 0.0f, 0.0f },  // cello section
   { INS_FULL_STRINGS,   -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.838f, 0.0f, 0.0f },  // full strings
   { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.9f, 1.15f, 0.0f, 0,   1.0f,  1.0f, 1.0f, 0.581f, 0.0f, 0.0f },  // molto vibrato violin
   { INS_SOLO_CELLO,     ART_LEGATO,    -1,           -1, 1.7f, 0.8f,  0.6f, 0,   1.0f,  1.0f, 1.0f, 0.985f, 0.0f, 0.0f },  // romantic cello
