@@ -10,7 +10,7 @@ struct Level { double rms; double peak; };
 
 static Level renderLevel(int model, float hz) {
   stringsInit(s);
-  s.instrument = (uint8_t)model;
+  s.instrument = (uint8_t)instrument;
   s.rootHz = hz;
   s.speed = 0.6f;
   s.pressure = 0.6f;
@@ -51,15 +51,15 @@ int main() {
       model == 4 ? "viola_section" : model == 5 ? "cello_section" :
       model == 6 ? "full_strings" : model == 7 ? "molto_vibrato" :
       model == 8 ? "romantic_cello" : model == 9 ? "tremolo_section" :
-      model == 10 ? "trill_section" : model == 11 ? "epic_ostinato" :
-      model == 12 ? "suspense" : model == 13 ? "heroic" :
-      model == 14 ? "emotional_swell" : model == 15 ? "shimmer" :
+      model == 10 ? "trill_section" : model == 11 ? "shimmer" :
+      model == 12 ? "emotional_swell" : model == 13 ? "heroic" :
+      model == 14 ? "epic_ostinato" : model == 15 ? "suspense" :
       model == 16 ? "overpressure" : "threnody";
     if (peak > 0.995) {
-      std::fprintf(stderr, "FAIL model=%02d peak=%.6f exceeds calibrated headroom\\n", model, peak);
+      std::fprintf(stderr, "FAIL model=%02d peak=%.6f exceeds calibrated headroom\n", model, peak);
       return 1;
     }
-    std::printf("LEVEL model=%02d name=%s rms=%.6f peak=%.6f\\n",
+    std::printf("LEVEL model=%02d name=%s rms=%.6f peak=%.6f\n",
       model, name, total / 3.0, peak);
   }
   return 0;
