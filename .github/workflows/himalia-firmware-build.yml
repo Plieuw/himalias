@@ -17,23 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply the pending release patch
-        run: |
-          set -e
-          if [ ! -f tmp/release.patch ]; then
-            echo "no patch to apply"
-            exit 0
-          fi
-          git config user.name "himalia-ci"
-          git config user.email "ci@users.noreply.github.com"
-          git apply tmp/release.patch
-          test "$(git hash-object IOCore/HimaliaSketch/strings_engine.h)" = "a7f79b9fb2bb65c159fa8f31005e1f943297de91"
-          test "$(git hash-object IOCore/HimaliaSketch/HimaliaSketch.ino)" = "1028a4dc4aa10ac67e5af6aed26976969edd17d0"
-          test "$(git hash-object STRINGS_BETA.md)" = "5d842687cb65da8bbdf2f0783b492a1bdd6670d4"
-          test "$(git hash-object firmware/README.md)" = "8b24a23ce278afc4b4c9ff639094bd0e286f4374"
-          git add -A
-          git commit -m "Strings v1.25.0-beta: grouped RATCHET models, flat register [skip ci]"
-          git push
       - name: Build the repository toolchain image
         run: docker build -t himalia-iocore IOCore
       - name: Compile firmware and convert to UF2
