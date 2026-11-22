@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - himalia-strings-beta
+      - himalia-strings-v1.26.0-beta
   pull_request:
     branches:
       - himalia-strings-beta
