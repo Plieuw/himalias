@@ -239,7 +239,8 @@ struct StrVoice {
   // (short notes) or lifts off (long notes); later the finger lifts
   float lenNext, ringNext, openNext;   // targets for the next note (from control)
   float openLen;                  // open string under this note (finger lifted)
-  float relK;                     // release speed of the bow
+  float attackK;                  // smooth, instrument-aware bow attack coefficient
+  float relK;                     // smooth release speed of the bow
   uint32_t relN;                  // samples since the release
   bool relStop;                   // bow stops on the string (damped) instead of lifting
   bool fingerOff;
@@ -472,7 +473,8 @@ static inline void stringsInit(StringsEngine &s) {
     v.turn = 0; v.slip = 0.0f; v.tBp1 = v.tBp2 = 0.0f;
     v.alfT = 0.0f;
     v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = 0.0f;
-    v.relK = 0.00035f; v.relN = 0; v.relStop = false; v.fingerOff = false;
+    v.attackK = 1.0f / (0.075f * STR_SR);
+    v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
     {                                                        // quarter-tone places, spread over the players
       static const float places[STR_VOICES] = { 0.125f, -0.5f, 0.75f, -1.0f, 0.375f, -0.25f };
       v.swarmT = places[i];
@@ -978,22 +980,33 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         // off with a whisper, the string rings on, slower taper for longer notes
         v.relStop = A.mode == MODE_BOW && (s.noteDur < 0.35f || s.articEff == ART_MARTELE);
         const float releaseEnergy = 0.75f + 0.25f * strClamp(v.vel, 0.0f, 1.0f);
-        const float tau = v.relStop ? (0.035f + 0.018f * (1.0f - releaseEnergy))
-                                    : strClamp(0.09f + 0.10f * s.noteDur, 0.10f, 0.24f);
+        // Ease the bow away; the string and body then keep their own decay.
+        float tau = v.relStop ? (0.065f + 0.025f * (1.0f - releaseEnergy))
+                              : strClamp(0.16f + 0.10f * s.noteDur, 0.16f, 0.32f);
+        if (v.family == FAM_CELLO) tau *= 1.18f;
+        else if (v.family == FAM_BASS) tau *= 1.25f;
         v.relK = 1.0f / (tau * STR_SR);
         if (v.env > 0.1f && A.mode == MODE_BOW) {
-          const float releaseDyn = 0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.0f);
-          v.tran += (v.relStop ? 0.022f : 0.014f) * releaseDyn * (0.85f + 0.15f * strRand(s));
+          const float releaseDyn = 0.45f + 0.30f * strClamp(v.vel, 0.0f, 1.0f);
+          v.tran += (v.relStop ? 0.0025f : 0.0015f) * releaseDyn * (0.90f + 0.10f * strRand(s));
         }
       }
       if (gate) {
         v.fingerOff = false;
         v.lenTarget = v.lenNext; v.ringLoss = v.ringNext; v.openLen = v.openNext;
         const bool continuing = A.legato && v.env > 0.05f;    // legato: same bow
-        if (continuing) v.tran += 0.025f * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.0f));                      // finger / bow change noise
+        if (continuing) v.tran += 0.006f * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.0f)); // quiet finger / bow change
         if (!continuing) {
           v.strokeN = 0;
           v.vel = strClamp(s.velocity, 0.0f, 1.3f);             // dynamic gate: how hard this note
+          // Natural default: establish stable stick-slip gradually. Cello and
+          // bass respond more slowly; velocity and articulation shape the time.
+          const float familyTau = (v.family == FAM_CELLO) ? 0.090f
+                                : (v.family == FAM_BASS) ? 0.105f : 0.075f;
+          const float articulationTau = strClamp(0.90f - 55.0f * A.attack, 0.48f, 1.0f);
+          const float dynamicTau = 1.18f - 0.32f * strClamp(v.vel, 0.0f, 1.0f);
+          const float attackTau = strClamp(familyTau * articulationTau * dynamicTau, 0.025f, 0.14f);
+          v.attackK = 1.0f / (attackTau * STR_SR);
           // bow speed from the note length: short notes (fast tempo) fast bow,
           // long notes slow bow (0.6 s = normal)
           v.bowMul = strClamp(sqrtf(0.6f / strClamp(s.noteDur, 0.05f, 4.0f)), 0.6f, 1.6f);
@@ -1012,7 +1025,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
                  * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) * transientDynamics;
           // The onset noise now follows note dynamics, with a lower ceiling;
           // bow attacks are especially restrained while pluck character remains.
-          if (A.mode == MODE_BOW) v.tran *= 0.06f;
+          if (A.mode == MODE_BOW) v.tran *= 0.025f;
           if (A.alternate) v.dir = -v.dir;                    // up-bow / down-bow
           // A legato finger change keeps the current string length and slides to the new pitch.
           // Detached/retriggered notes start directly at their target pitch.
@@ -1057,10 +1070,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     bool bowing = v.gate && A.mode == MODE_BOW;
     if (bowing && strokeMax && v.strokeN > strokeMax) bowing = false;
     if (bowing) {
-      // Softer, velocity-aware bow onset: quieter notes ease in more slowly.
-      const float attackShape = 0.28f + 0.22f * strClamp(v.vel, 0.0f, 1.0f)
-                              + 0.08f * strClamp(s.pressure, 0.0f, 1.0f);
-      v.env += (1.0f - v.env) * (A.attack * attackShape);
+      // Smooth, velocity-aware physical onset. attackK is calculated once
+      // at the note edge; this interpolation is inexpensive in the audio ISR.
+      v.env += (1.0f - v.env) * v.attackK;
     } else {
       const float strokeRelease = strokeMax ? 0.0022f : v.relK;
       v.env -= v.env * strokeRelease;
@@ -1073,7 +1085,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           && v.openLen > v.len * 1.03f) {
         v.fingerOff = true;
         v.len = v.lenTarget = v.fingerLen = v.openLen;
-        v.tran += 0.008f * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.0f));
+        v.tran += 0.0010f * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.0f));
       }
     }
     v.accent *= A.accentDecay;
@@ -1153,7 +1165,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         const uint32_t T = (uint32_t)(0.09f * STR_SR), half = T / 2;
         const float x = (float)v.turn / (float)T;                       // 1 -> 0
         bv *= 0.3f + 0.7f * fabsf(cosf(3.14159265f * x));               // slow down, turn, speed up
-        if (v.turn == half) { v.dir = -v.dir; v.tran += 0.055f * (0.45f + 0.55f * strClamp(v.vel, 0.0f, 1.0f)); }
+        if (v.turn == half) { v.dir = -v.dir; v.tran += 0.012f * (0.45f + 0.55f * strClamp(v.vel, 0.0f, 1.0f)); }
         v.turn--;
       }
       if (trem) {
@@ -1163,7 +1175,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         tri *= 3.0f;
         tri = strClamp(tri, -1.0f, 1.0f);
         const float sg = tri >= 0 ? 1.0f : -1.0f;
-        if (sg != v.tremPrev) { v.tran += 0.085f * (0.5f + 0.5f * strClamp(v.vel, 0.0f, 1.0f)); v.tremPrev = sg; }   // bow change scratch
+        if (sg != v.tremPrev) { v.tran += 0.025f * (0.5f + 0.5f * strClamp(v.vel, 0.0f, 1.0f)); v.tremPrev = sg; }   // bow change scratch
         bv *= tri;
       }
       // rosin noise on the bow
@@ -1220,7 +1232,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       const float nz = strNoise(v.nrng);
       tr = nz * v.tran * s.transient;
       v.tran *= (A.mode == MODE_STRIKE) ? 0.990f : 0.9982f;  // wood click shorter
-      newVel += tr * 0.06f;
+      newVel += tr * 0.025f;
     }
     v.neck[v.nw]   = bridgeRefl + newVel;
     v.bridge[v.bw] = nutRefl + newVel;
@@ -1234,7 +1246,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     const float trHp = v.tranHp - v.tBp1;
     // louder notes sound brighter: tilt the radiated sound with the velocity
     const float tilt = 0.65f * (v.vel - 0.7f) + 0.25f * (v.bowMul - 1.0f);   // fast bow a bit brighter
-    const float radiated = bridgeOut + (bridgeOut - v.prevB) * tilt + trHp * 0.035f;
+    const float radiated = bridgeOut + (bridgeOut - v.prevB) * tilt + trHp * 0.018f;
     v.prevB = bridgeOut;
     // dynamics: the string alone follows the bow speed unevenly from note to
     // note; a player also uses force and contact point, so the note level
