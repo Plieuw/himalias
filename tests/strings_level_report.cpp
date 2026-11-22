@@ -1,6 +1,6 @@
 // Relative loudness and peak report for all Himalia Strings models.
 // Host-side measurement only; no firmware behavior is changed.
-#define STR_OUT_GAIN 0.60f
+#define STR_OUT_GAIN 0.72f
 #include "../IOCore/HimaliaSketch/strings_engine.h"
 #include <cmath>
 #include <cstdio>
