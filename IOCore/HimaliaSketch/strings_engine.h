@@ -134,8 +134,8 @@ struct StrModelDef {
 static const StrModelDef STR_MODELS[MDL_COUNT] = {
   //  base                art            layout        trem vibD  vibR  swell trill accent tight ring gain
   // 1-7: the instruments themselves, solo -> section -> tutti
-  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.578f, 0.0f, 0.0f },  // solo violin
-  { INS_SOLO_VIOLA,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.792f, 0.0f, 0.0f },  // solo viola
+  { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.850f, 0.0f, 0.0f },  // solo violin
+  { INS_SOLO_VIOLA,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.950f, 0.0f, 0.0f },  // solo viola
   { INS_SOLO_CELLO,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.077f, 0.0f, 0.0f },  // solo cello
   { INS_VIOLIN_SECTION, -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.807f, 0.0f, 0.0f },  // violin section
   { INS_VIOLA_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.705f, 0.0f, 0.0f },  // viola section
