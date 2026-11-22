@@ -110,7 +110,7 @@ static const StrArticDef STR_ARTIC[ART_COUNT] = {
   { MODE_BOW,    0.035f,1.1f, 1.0f, 0.0015f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00045f,0.60f, 0, false, true  },  // sul ponticello
   { MODE_STRIKE, 0.11f, 1.0f, 1.0f, 0.0f,    0.0f, 0.9990f,  0.0f, 0.0f,  0.0030f, 0.12f, 0, false, false },  // col legno battuto
   { MODE_BOW,    0.08f, 0.35f,0.9f, 0.0010f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.0007f, 1.00f, 12, false, true },  // flageolet (harmonics)
-  { MODE_PLUCK,  0.11f, 1.0f, 1.0f, 0.0f,    0.0f, 0.9990f,  0.0f, 0.0f,  0.0030f, 1.20f, 0, false, false },  // pizzicato
+  { MODE_PLUCK,  0.11f, 1.0f, 1.0f, 0.0f,    0.0f, 0.9990f,  0.0f, 0.0f,  0.0030f, 1.80f, 0, false, false },  // pizzicato: longer natural ring-out
   { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0010f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00012f, 0.60f, 0, false, true  },  // portamento
 };
 
@@ -715,7 +715,11 @@ static inline void stringsControl(StringsEngine &s) {
     s.famLpK[f] = 1.0f - expf(-6.2831853f * fc / STR_SR);
   }
 
-  const float vibRateM = M.vibRate;
+  // Expressive modulation follows the player's actual gesture, not the detected beat.
+  // Bow speed, pressure, dynamic level and note spacing shape the hand motion.
+  const float adaptiveDrive = strClamp(0.45f * s.speed + 0.35f * s.pressure
+                                      + 0.20f * strClamp(s.velocity / 1.25f, 0.0f, 1.0f), 0.0f, 1.0f);
+  const float adaptiveNoteRate = sqrtf(strClamp(0.6f / strClamp(s.noteDur, 0.08f, 2.5f), 0.5f, 1.5f));
   // ---- trill: ~9 alternations per second, on the tempo when there is a clock
   {
     float th = 9.0f;
@@ -728,26 +732,6 @@ static inline void stringsControl(StringsEngine &s) {
     }
     s.trillInc = 0.5f * th / STR_SR;                          // one cycle = two notes
   }
-  // ---- tempo sync: pick the beat subdivision nearest to the natural rate
-  //      vibrato ~5.5 Hz, tremolo ~13 bow strokes per second
-  const bool synced = s.clockPeriod > 0;
-  float beatHz = synced ? STR_SR / (float)s.clockPeriod : 0.0f;
-  if (synced) {
-    static const float mult[12] = { 0.25f, 1.0f / 3, 0.5f, 2.0f / 3, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f, 12.0f };
-    float bestV = 0, bestT = 0, dV = 1e9f, dT = 1e9f;
-    for (int k = 0; k < 12; k++) {
-      const float r = beatHz * mult[k];
-      const float ev = fabsf(logf(r / (5.5f * vibRateM))), et = fabsf(logf(r / 13.0f));
-      if (ev < dV) { dV = ev; bestV = r; }
-      if (et < dT) { dT = et; bestT = r; }
-    }
-    s.vibHz  = (dV < 0.45f) ? bestV : 0.0f;                 // within ~-35% ... +55%
-    s.tremHz = (dT < 0.6f) ? bestT * 0.5f : 6.5f;           // one cycle = two strokes
-  } else {
-    s.vibHz = 0.0f;
-    s.tremHz = 6.5f;
-  }
-
   int nActive = 0;
   for (int i = 0; i < STR_VOICES; i++) {
     StrVoice &v = s.v[i];
@@ -768,11 +752,14 @@ static inline void stringsControl(StringsEngine &s) {
     if (divisi && !solo && i > 0) semis += pool[s.divisiTone[i] & 7];
     semis += A.semis;
     v.family = fam;
-    // vibrato rate: on the tempo when there is a steady clock, otherwise free
-    // (every player a little different)
-    v.vibK = 6.2831853f * (s.vibHz > 0 ? s.vibHz : STR_VIB_RATE[fam] * v.vibRateMul * M.vibRate) / STR_SR;
-    // tremolo: exactly on the tempo when synced, otherwise every player a bit different
-    v.tremInc = s.tremHz * (synced ? 1.0f : v.vibRateMul) / STR_SR;
+    // Vibrato rate follows expression and phrase length, with small player-to-player variation.
+    const float vibRate = STR_VIB_RATE[fam] * M.vibRate * v.vibRateMul
+                        * (0.86f + 0.24f * adaptiveDrive) * (0.96f + 0.08f * adaptiveNoteRate);
+    v.vibK = 6.2831853f * vibRate / STR_SR;
+    // Tremolo bow strokes adapt to bow speed, pressure, dynamics and note spacing.
+    // No beat subdivision or BPM locking: the hand's motion drives the rate.
+    const float tremRate = (4.5f + 3.5f * adaptiveDrive) * adaptiveNoteRate * v.vibRateMul;
+    v.tremInc = tremRate / STR_SR;
     v.vibDepth = STR_VIB_DEPTH[fam] * v.vibDepthMul * M.vibDepth;
 
     // slow intonation drift: every player wanders a few cents
@@ -945,7 +932,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     s.onW = (uint8_t)((s.onW + 1) % STR_ONSETS);
     if (s.onN < STR_ONSETS) s.onN++;
     s.onCount++;
-    // tremolo strokes start on the beat (tiny per-player spread)
+    // each new note gives the players a slightly staggered bow-stroke phase
     for (int i = 0; i < STR_VOICES; i++)
       s.v[i].tremPh = 0.25f + 0.01f * (float)i;
   }
@@ -1087,7 +1074,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     v.vc -= vk * v.vs;
     const float vibTarget = (s.vibrato && (v.gate || (v.env > 0.05f && !v.fingerOff)) && A.mode == MODE_BOW && !v.vibDelay)
                           ? v.vibDepth * (0.6f + 0.4f * s.speed) * (0.75f + 0.25f * v.vel)
-                            * v.jitD * (0.4f + 0.6f * v.vibWarm) : 0.0f;
+                            * (0.85f + 0.15f * s.pressure) * v.jitD * (0.4f + 0.6f * v.vibWarm) : 0.0f;
     v.vibAmt += (vibTarget - v.vibAmt) * 0.00007f;
     // the finger rolls back from the note: the pitch swings mostly below it,
     // and the roll is a little asymmetric (a touch of the 2nd harmonic)
