@@ -87,7 +87,7 @@ struct StrArticDef {
   float beta;          // bow position (bridge = 0)
   float press;         // pressure multiplier
   float speed;         // bow speed multiplier
-  float attack;        // bow envelope attack per sample
+  float attack;        // articulation attack character (shapes natural attack time)
   float accent;        // extra bow speed at the start of a stroke
   float accentDecay;   // per sample
   float bite;          // extra pressure during the accent
