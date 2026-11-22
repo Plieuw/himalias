@@ -1,7 +1,7 @@
 // Host test for the Himalia strings engine (v2).
 // Checks every instrument x layout for finite, bounded, non-silent output,
 // solo intonation, pizzicato decay and tremolo.
-#define STR_OUT_GAIN 0.60f  // same fixed output calibration as the firmware
+// STR_OUT_GAIN: the firmware value (no override)
 #include "../IOCore/HimaliaSketch/strings_engine.h"
 #include <cmath>
 #include <cstdio>
@@ -271,8 +271,65 @@ int main() {
     if (std::fabs(bpmB - 90.0f) > 1.5f && std::fabs(bpmB - 180.0f) > 3.0f) { std::printf("FAIL tempo change %.1f bpm\n", bpmB); ++fails; }
   }
 
+  // v1.32: the output never goes past the safety ceiling (4.98 V), also at the
+  // knob extremes with a 10 V dynamic gate
+  {
+    float mx = 0.0f;
+    for (int m = 0; m < MDL_COUNT; ++m) {
+      stringsInit(s); s.instrument = (uint8_t)m; s.rootHz = 65.4f; s.speed = 1.0f; s.pressure = 1.0f;
+      s.velocity = 1.25f; s.speedCV = 1.25f; stringsControl(s);
+      for (int n = 0; n < 40000; ++n) {
+        if ((n & 127) == 0) stringsControl(s);
+        const float o = stringsTick(s, (n % 19000) < 15000);
+        mx = std::fmax(mx, std::fmax(std::fabs(o), std::fabs(s.outDivisi)));
+      }
+    }
+    if (mx > STR_LIM_CEIL + 1e-4f) { std::printf("FAIL output peak %.4f above the ceiling\n", mx); ++fails; }
+  }
+
+  // v1.32 HAESE natural default: deterministic -- the same CV / gate phrase
+  // played twice from the same start gives exactly the same output
+  {
+    const float mel[6] = { 0, 2, 4, 7, 12, 5 };
+    double sum[2] = { 0, 0 };
+    for (int pass = 0; pass < 2; ++pass) {
+      stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; stringsControl(s);
+      for (int n = 0; n < 6 * 12000; ++n) {
+        s.rootHz = 293.66f * std::exp2(mel[n / 12000] / 12.0f);
+        if ((n & 127) == 0) stringsControl(s);
+        const float o = stringsTick(s, (n % 12000) < 9000);
+        sum[pass] += o * (1.0 + (n % 7));
+      }
+    }
+    if (sum[0] != sum[1]) { std::printf("FAIL phrase not deterministic\n"); ++fails; }
+  }
+
+  // v1.32 phrase analysis: a rest starts a new phrase (down-bow, gentler
+  // attack), a rising line inside the phrase gets more bow energy
+  {
+    stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; stringsControl(s);
+    float eFirst = 0, eRise = 0, attFirst = 0, attRest = 0; bool startAfterRest = false;
+    const float mel[5] = { 0, 4, 7, 0, 0 };                 // notes 0..2 legato-ish, rest, note 4
+    int note = -1;
+    for (int n = 0; n < 5 * 14000; ++n) {
+      const int k = n / 14000;
+      const bool gate = (k < 3) ? (n % 14000) < 13000 : (k == 4 && (n % 14000) < 12000);
+      s.rootHz = 293.66f * std::exp2(mel[k] / 12.0f);
+      if ((n & 127) == 0) stringsControl(s);
+      stringsTick(s, gate);
+      if (gate && k != note && (n % 14000) == 1) {
+        note = k;
+        if (k == 0) { eFirst = s.brain.energy; attFirst = s.brain.attackMul; }
+        if (k == 2) eRise = s.brain.energy;
+        if (k == 4) { startAfterRest = s.brain.phraseStart; attRest = s.brain.attackMul; }
+      }
+    }
+    if (!(eRise > eFirst)) { std::printf("FAIL rising line energy %.3f vs %.3f\n", eRise, eFirst); ++fails; }
+    if (!startAfterRest || attRest <= 1.0f || attFirst <= 1.0f) { std::printf("FAIL phrase start after a rest\n"); ++fails; }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

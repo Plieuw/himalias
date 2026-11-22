@@ -51,7 +51,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.31.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.32.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -340,6 +340,9 @@ void setup() {
   zt4.setCallback(true, TC_CALLBACK_CC_CHANNEL0, renderAudio);  // set DAC in the callback
 
   seqStep(0, false);   // start the squares with a defined pattern
+  // flush tiny (denormal) floats to zero: decaying filters and strings can
+  // never slow the audio interrupt down
+  __set_FPSCR(__get_FPSCR() | (1u << 24));
   stringsInit(strings);
   stringsControl(strings);
   NVIC_SetPriority(TC4_IRQn, 0);             // audio first

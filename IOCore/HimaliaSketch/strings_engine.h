@@ -47,8 +47,15 @@
 #endif
 #define STR_AIR_DEFAULT 0.28f   // listener perspective: restrained upper-air layer
 #ifndef STR_OUT_GAIN
-#define STR_OUT_GAIN 0.72f      // calibrated for a 4.95 V peak target at the +/-5 V DAC scale
+#define STR_OUT_GAIN 0.62f      // normal playing peaks ~1.5 ... 3.7 V, firm ~2.5 ... 4.5 V
 #endif
+#ifndef STR_DYN_COMP
+#define STR_DYN_COMP 0.40f      // dynamic curve: above normal the level grows with exponent 0.6
+#endif
+#ifndef STR_LIM_CEIL
+#define STR_LIM_CEIL 0.996f     // safety net only: max +-4.98 V (DAC code 4029 of 4095), never clips
+#endif
+#define STR_LIM_LOOK 64         // look-ahead (samples, 1.3 ms); never clips, only moves the gain
 #define STR_SYM_STRINGS 5       // sympathetic resonance: up to 5 open strings (5-string bass)
 #define STR_SYM_LEN 1600        // delay per open string (bass B0 ~ 1540 samples)
 #ifndef STR_SYM_LEVEL
@@ -240,6 +247,12 @@ struct StrVoice {
   float lenNext, ringNext, openNext;   // targets for the next note (from control)
   float openLen;                  // open string under this note (finger lifted)
   float attackK;                  // smooth, instrument-aware bow attack coefficient
+  float relRamp;                  // release: the bow starts to slow down gently (0 -> 1)
+  float glideK;                   // finger travel speed (computed at control rate)
+  float pe, peT;                  // phrase bow energy (smoothed, target)
+  float vibIntent;                // vibrato intention for this note
+  float vibGrow;                  // vibrato grows while the note lasts (0 -> 1)
+  float levComp;                  // dynamic curve: level growth above normal is gentler
   float relK;                     // smooth release speed of the bow
   uint32_t relN;                  // samples since the release
   bool relStop;                   // bow stops on the string (damped) instead of lifting
@@ -277,6 +290,29 @@ struct StrSym {
   uint32_t idle;                  // samples without input (rung out -> skipped)
 };
 
+// ------------------------------------------------------------------ HAESE natural default
+// Control Interpreter + Adaptive Playing Brain. Kept apart from the string
+// physics: it only reads the gate / pitch history and hands per-note intentions
+// to the players. Deterministic (no randomness): the same CV / gate phrase
+// gives recognisably the same performance; the players' own small differences
+// stay where they were.
+struct StrBrain {
+  // control interpreter: note history
+  float    prevSemis;             // pitch of the previous note (semitones from A440)
+  float    ioiAvg;                // typical time between notes (s)
+  uint32_t onNow, offNow;         // sample time of the last gate start / end
+  bool     haveOff;
+  // phrase analysis
+  uint8_t  idx;                   // note number in the phrase (0 = first)
+  float    peak;                  // highest note so far in the phrase
+  // intentions for the next note (read by the players at their stroke start)
+  float    energy;                // bow energy (1 = neutral)
+  float    attackMul;             // attack time (1 = neutral, > 1 = more gentle)
+  float    vibIntent;             // vibrato intention (1 = neutral)
+  bool     phraseStart;           // new phrase: down-bow, gentle placement
+  bool     connected;             // tied to the previous note (no new bow)
+};
+
 struct StringsEngine {
   StrVoice v[STR_VOICES];
   StrMode body[STR_FAMILIES][STR_BODY_MODES];      // divisi players (2 ... 6)
@@ -287,6 +323,8 @@ struct StringsEngine {
   float bodyDirect[STR_FAMILIES];
   StrAir airF;
   StrSym sym[2];                  // sympathetic strings: player 1, divisi
+  StrBrain brain;                 // HAESE: interpretation of the gate / pitch phrase
+  struct Lim { float d[STR_LIM_LOOK]; float pk, g; uint8_t w, hold; } lim[2];   // safety net
   float tuneRatio;                // how far the pitch CV sits from A = 440 (the open strings follow)
   // control (written from loop)
   float rootHz;
@@ -474,6 +512,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.alfT = 0.0f;
     v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = 0.0f;
     v.attackK = 1.0f / (0.075f * STR_SR);
+    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.levComp = 1.0f;
     v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
     {                                                        // quarter-tone places, spread over the players
       static const float places[STR_VOICES] = { 0.125f, -0.5f, 0.75f, -1.0f, 0.375f, -0.25f };
@@ -489,6 +528,13 @@ static inline void stringsInit(StringsEngine &s) {
   s.pizz = false; s.vibrato = true; s.tremolo = false; s.mute = false; s.artic = ART_LEGATO;
   for (int f = 0; f < STR_FAMILIES; f++) { s.famLp[f] = 0; s.famLpLead[f] = 0; s.famLpK[f] = 0.5f; }
   s.outDivisi = 0; s.dc2x = s.dc2y = 0;
+  for (int k = 0; k < 2; k++) { for (int n = 0; n < STR_LIM_LOOK; n++) s.lim[k].d[n] = 0.0f; s.lim[k].pk = 0.0f; s.lim[k].g = 1.0f; s.lim[k].w = 0; s.lim[k].hold = 0; }
+  {
+    StrBrain &b = s.brain;
+    b.prevSemis = 0.0f; b.ioiAvg = 0.6f; b.onNow = b.offNow = 0; b.haveOff = false;
+    b.idx = 0; b.peak = -99.0f;
+    b.energy = 1.0f; b.attackMul = 1.0f; b.vibIntent = 1.0f; b.phraseStart = true; b.connected = false;
+  }
   s.bowNoise = 0.0f;
   s.transient = 1.0f;
   s.air = STR_AIR_DEFAULT;
@@ -763,6 +809,31 @@ static inline void stringsControl(StringsEngine &s) {
     const float tremRate = (4.5f + 3.5f * adaptiveDrive) * adaptiveNoteRate * v.vibRateMul;
     v.tremInc = tremRate / STR_SR;
     v.vibDepth = STR_VIB_DEPTH[fam] * v.vibDepthMul * M.vibDepth;
+    // finger travel (was per sample): interval, phrase length and playing
+    // energy shape the glide; the cello's finger has more weight
+    {
+      const StrArticDef &AA = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : 0];
+      float gk = AA.glide;
+      if (AA.legato && v.gate && v.env > 0.05f && AA.glide > 0.0f) {
+        const float intervalSemis = 12.0f * fabsf(log2f(v.lenTarget / strClamp(v.len, 8.0f, (float)(STR_NECK_LEN - 8))));
+        const float intervalFactor = strClamp(0.78f + 0.095f * intervalSemis, 0.78f, 1.95f);
+        const float phraseFactor = sqrtf(strClamp(s.noteDur / 0.6f, 0.55f, 1.65f));
+        const float expressionFactor = 1.15f - 0.30f * adaptiveDrive;
+        const float weight = (fam == FAM_CELLO) ? 1.15f : (fam == FAM_BASS ? 1.25f : 1.0f);
+        const float timeFactor = strClamp(intervalFactor * phraseFactor * expressionFactor * weight, 0.55f, 2.8f);
+        gk = strClamp(AA.glide / timeFactor, AA.glide * 0.30f, AA.glide * 1.8f);
+      }
+      v.glideK = gk;
+    }
+    // dynamic curve (HAESE P(D)): above normal playing the level grows ~30 %
+    // as steeply (the tone still gets brighter and grippier), below normal it
+    // is untouched, so soft stays soft and firm playing keeps its headroom
+    {
+      const float intensity = (s.bowBase * s.speedCV / 0.113f) * exp2f(2.2f * (strClamp(s.pressure, 0.0f, 1.0f) - 0.5f))
+                            * (0.45f + 0.55f * v.vel) * v.bowMul * v.pe;
+      const float t = intensity > 1.0f ? powf(intensity, -STR_DYN_COMP) : 1.0f;
+      v.levComp += (t - v.levComp) * 0.25f;
+    }
 
     // slow intonation drift: every player wanders a few cents
     if ((s.rng & 0xFF) < 2) v.driftTarget = 4.0f * strRand(s);
@@ -891,6 +962,65 @@ static inline float strSymTick(StrSym &y, float x) {
   return out * y.out;
 }
 
+// HAESE natural default: interpret the new note from the phrase so far.
+// Called once per gate start. All rules are small and deterministic.
+static inline void strBrainNote(StringsEngine &s) {
+  StrBrain &b = s.brain;
+  const float semis = 12.0f * log2f(strClamp(s.rootHz, 16.0f, 8000.0f) / 440.0f);
+  const float ioi = s.noteDur;                              // time since the previous gate start
+  const float gap = b.haveOff ? (float)(s.now - b.offNow) / STR_SR : 9.0f;   // silence before this note
+  // phrase continuity: a real rest (long against the rhythm) or a long pause
+  // starts a new phrase; a gate that hardly opened is a connected note
+  const bool rest = gap > 0.25f && gap > 0.6f * b.ioiAvg;
+  const bool newPhrase = (b.idx == 0 && b.peak < -90.0f) || rest || ioi > 2.4f * b.ioiAvg || gap > 1.2f;
+  b.connected = !newPhrase && gap < 0.04f;
+  const float interval = newPhrase ? 0.0f : semis - b.prevSemis;
+  if (newPhrase) { b.idx = 0; b.peak = semis; }
+  // bow energy: a phrase opens a little gentler and grows over its first
+  // notes; rising lines lean in, falling lines relax; a new high point of
+  // the phrase gets a little more
+  float e = 0.92f + 0.08f * (float)(b.idx < 3 ? b.idx : 3) / 3.0f;
+  e += 0.010f * strClamp(interval, -7.0f, 7.0f);
+  float vib = 1.0f;
+  float att = 1.0f;
+  if (!newPhrase && semis > b.peak + 0.5f) { e += 0.05f; vib += 0.15f; b.peak = semis; }
+  // big leaps: a more deliberate placement and an expressive arrival
+  const float leap = interval < 0 ? -interval : interval;
+  if (leap >= 5.0f) { att *= 1.10f; vib += 0.10f; }
+  // repeated notes: alternate bows feel different (down a little heavier)
+  if (!newPhrase && leap < 0.5f) e *= (b.idx & 1) ? 0.97f : 1.02f;
+  if (newPhrase) att *= 1.25f;                               // the bow is placed, not thrown
+  // vibrato intention from the note lengths: quick notes hardly any, long
+  // notes the full vibrato (it then still grows while the note lasts)
+  const float len = strClamp(b.ioiAvg, 0.05f, 3.0f);
+  vib *= len < 0.22f ? 0.35f : (len < 0.5f ? 0.35f + 0.65f * (len - 0.22f) / 0.28f : 1.0f);
+  b.energy = strClamp(e, 0.82f, 1.15f);
+  b.attackMul = strClamp(att, 0.8f, 1.4f);
+  b.vibIntent = strClamp(vib, 0.25f, 1.3f);
+  b.phraseStart = newPhrase;
+  // history
+  if (ioi < 3.0f) b.ioiAvg += (ioi - b.ioiAvg) * 0.3f;
+  b.prevSemis = semis;
+  if (b.idx < 255) b.idx++;
+  b.onNow = s.now;
+}
+
+// safety net before the DAC: a look-ahead limiter that only moves the gain
+// when a peak would go past the ceiling (normally it does nothing)
+template <typename L> static inline float strLimit(L &l, float x) {
+  const float a = x < 0 ? -x : x;
+  // hold every peak for as long as it is inside the look-ahead, then release
+  if (a >= l.pk) { l.pk = a; l.hold = STR_LIM_LOOK; }
+  else if (l.hold) l.hold--;
+  else l.pk *= 0.99974f;
+  const float gt = l.pk > STR_LIM_CEIL ? STR_LIM_CEIL / l.pk : 1.0f;
+  l.g += (gt - l.g) * (gt < l.g ? 0.15f : 0.0005f);       // settles fully within the look-ahead
+  const float y = l.d[l.w];
+  l.d[l.w] = x;
+  l.w = (uint8_t)((l.w + 1) % STR_LIM_LOOK);
+  return y * l.g;
+}
+
 static inline float strAirHp(StrAir &a, int ch, float x) {
   for (int st = 0; st < 2; st++) {
     float *z = a.z[ch][st];
@@ -937,7 +1067,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // each new note gives the players a slightly staggered bow-stroke phase
     for (int i = 0; i < STR_VOICES; i++)
       s.v[i].tremPh = 0.25f + 0.01f * (float)i;
+    strBrainNote(s);                                         // HAESE: how to play this note
   }
+  if (!gate && s.gatePrev) { s.brain.offNow = s.now; s.brain.haveOff = true; }
   // the dynamic gate may still be rising at the edge: keep the peak of the first 10 ms
   if (s.sinceGate < (uint32_t)(0.01f * STR_SR) && s.onN) {
     const uint8_t last = (uint8_t)((s.onW + STR_ONSETS - 1) % STR_ONSETS);
@@ -958,7 +1090,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   // overpressure: PRESSURE knob picks crunch / octave down / twelfth down;
   // the weakly driven periods lose level, give it back
   const int ovrDiv = M.over > 0.0f ? (s.pressure > 0.75f ? 3 : (s.pressure > 0.4f ? 2 : 1)) : 1;
-  const float ovrGain = ovrDiv == 3 ? 3.0f : (ovrDiv == 2 ? 2.3f : 1.0f);
+  const float ovrGain = ovrDiv == 3 ? 2.0f : (ovrDiv == 2 ? 1.6f : 1.0f);
   const StrArticDef &A = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : 0];
   const uint32_t strokeMax = (uint32_t)(A.stroke * STR_SR);
   float famBus[STR_FAMILIES]  = { 0, 0, 0, 0 };   // divisi players
@@ -986,6 +1118,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         if (v.family == FAM_CELLO) tau *= 1.18f;
         else if (v.family == FAM_BASS) tau *= 1.25f;
         v.relK = 1.0f / (tau * STR_SR);
+        v.relRamp = 0.0f;                                     // the bow slows down gently, no kink
         if (v.env > 0.1f && A.mode == MODE_BOW) {
           const float releaseDyn = 0.45f + 0.30f * strClamp(v.vel, 0.0f, 1.0f);
           v.tran += (v.relStop ? 0.0025f : 0.0015f) * releaseDyn * (0.90f + 0.10f * strRand(s));
@@ -994,7 +1127,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       if (gate) {
         v.fingerOff = false;
         v.lenTarget = v.lenNext; v.ringLoss = v.ringNext; v.openLen = v.openNext;
-        const bool continuing = A.legato && v.env > 0.05f;    // legato: same bow
+        const bool continuing = (A.legato || s.brain.connected) && v.env > 0.05f;   // same bow
+        v.peT = s.brain.energy;                                // phrase shaping, also on tied notes
+        if (continuing) { v.vibGrow *= 0.7f; v.vibIntent = 0.5f * (v.vibIntent + s.brain.vibIntent); }
         if (continuing) v.tran += 0.006f * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.0f)); // quiet finger / bow change
         if (!continuing) {
           v.strokeN = 0;
@@ -1005,7 +1140,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
                                 : (v.family == FAM_BASS) ? 0.105f : 0.075f;
           const float articulationTau = strClamp(0.90f - 55.0f * A.attack, 0.48f, 1.0f);
           const float dynamicTau = 1.18f - 0.32f * strClamp(v.vel, 0.0f, 1.0f);
-          const float attackTau = strClamp(familyTau * articulationTau * dynamicTau, 0.025f, 0.14f);
+          const float attackTau = strClamp(familyTau * articulationTau * dynamicTau * s.brain.attackMul, 0.025f, 0.16f);
+          v.vibIntent = s.brain.vibIntent; v.vibGrow = 0.0f; v.relRamp = 1.0f;
           v.attackK = 1.0f / (attackTau * STR_SR);
           // bow speed from the note length: short notes (fast tempo) fast bow,
           // long notes slow bow (0.6 s = normal)
@@ -1026,7 +1162,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           // The onset noise now follows note dynamics, with a lower ceiling;
           // bow attacks are especially restrained while pluck character remains.
           if (A.mode == MODE_BOW) v.tran *= 0.025f;
-          if (A.alternate) v.dir = -v.dir;                    // up-bow / down-bow
+          if (s.brain.phraseStart && A.mode == MODE_BOW) v.dir = 1.0f;   // a phrase starts down-bow
+          else if (A.alternate) v.dir = -v.dir;               // up-bow / down-bow
           // A legato finger change keeps the current string length and slides to the new pitch.
           // Detached/retriggered notes start directly at their target pitch.
           if (!continuing || v.env < 0.05f) v.len = v.lenTarget;
@@ -1048,21 +1185,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     }
     v.strokeN++;
 
-    // Adaptive musical finger travel. Only connected/legato articulations slide;
-    // detached notes were placed directly at the new pitch above. The interval,
-    // phrase length and playing energy shape the glide time, without quantising
-    // the pitch or tying it to BPM. Each ensemble player retains its own timing.
-    float glideK = A.glide;
-    if (A.legato && v.gate && v.env > 0.05f && A.glide > 0.0f) {
-      const float intervalSemis = 12.0f * fabsf(log2f(v.lenTarget / strClamp(v.len, 8.0f, (float)(STR_NECK_LEN - 8))));
-      const float intervalFactor = strClamp(0.78f + 0.095f * intervalSemis, 0.78f, 1.95f);
-      const float phraseFactor = sqrtf(strClamp(s.noteDur / 0.6f, 0.55f, 1.65f));
-      const float energy = strClamp(0.45f * s.speed + 0.35f * s.pressure
-                                  + 0.20f * strClamp(s.velocity / 1.25f, 0.0f, 1.0f), 0.0f, 1.0f);
-      const float expressionFactor = 1.15f - 0.30f * energy;
-      const float timeFactor = strClamp(intervalFactor * phraseFactor * expressionFactor, 0.55f, 2.8f);
-      glideK = strClamp(A.glide / timeFactor, A.glide * 0.30f, A.glide * 1.8f);
-    }
+    // finger travel: speed computed at control rate (stringsControl)
+    const float glideK = v.glideK;
     v.len += (v.lenTarget - v.len) * glideK;
 
     // bow envelope: attack per articulation, release ~60 ms; staccato and
@@ -1074,7 +1198,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // at the note edge; this interpolation is inexpensive in the audio ISR.
       v.env += (1.0f - v.env) * v.attackK;
     } else {
-      const float strokeRelease = strokeMax ? 0.0022f : v.relK;
+      // the bow decelerates smoothly (~20 ms ramp-in) instead of with a kink,
+      // which used to break the stick-slip into a small tick
+      v.relRamp += (1.0f - v.relRamp) * 0.001f;
+      const float strokeRelease = (strokeMax ? 0.0022f : v.relK) * v.relRamp;
       v.env -= v.env * strokeRelease;
     }     // short strokes lift fast
     if (!v.gate) {
@@ -1089,6 +1216,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       }
     }
     v.accent *= A.accentDecay;
+    v.pe += (v.peT - v.pe) * 0.0003f;                        // phrase energy glides (~70 ms)
+    if (v.gate && v.vibGrow < 1.0f) v.vibGrow += 1.0f / (1.4f * STR_SR);   // vibrato develops over ~1.4 s
     v.swell += (1.0f - v.swell) * swellK;
 
     // vibrato: own oscillator, fades in ~0.3 s after the note starts and
@@ -1112,7 +1241,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     v.vc -= vk * v.vs;
     const float vibTarget = (s.vibrato && (v.gate || (v.env > 0.05f && !v.fingerOff)) && A.mode == MODE_BOW && !v.vibDelay)
                           ? v.vibDepth * (0.6f + 0.4f * s.speed) * (0.75f + 0.25f * v.vel)
-                            * (0.85f + 0.15f * s.pressure) * v.jitD * (0.4f + 0.6f * v.vibWarm) : 0.0f;
+                            * (0.85f + 0.15f * s.pressure) * v.jitD * (0.4f + 0.6f * v.vibWarm)
+                            * v.vibIntent * (0.5f + 0.5f * v.vibGrow) : 0.0f;
     v.vibAmt += (vibTarget - v.vibAmt) * 0.00007f;
     // the finger rolls back from the note: the pitch swings mostly below it,
     // and the roll is a little asymmetric (a touch of the 2nd harmonic)
@@ -1153,7 +1283,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // gives each stroke a different bite without changing its pitch or timing.
       const float bowDirection = (v.dir > 0.0f) ? 1.005f : 0.995f;
       float bv = bowMax * A.speed * v.speedScale * v.env * v.swell * (1.0f + v.accent)
-               * v.dir * v.bowMul * bowDirection;
+               * v.dir * v.bowMul * bowDirection * v.pe;
       // long notes: when the bow runs out the player changes bow: slows down,
       // turns (scratch) and speeds up again, ~90 ms. Every player has their
       // own bow length, so a section changes bow at different moments
@@ -1251,7 +1381,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // dynamics: the string alone follows the bow speed unevenly from note to
     // note; a player also uses force and contact point, so the note level
     // follows the dynamic gate too (1 = no dynamic gate = unchanged)
-    const float dyn = v.gain * v.bowGain * ovrGain * (0.45f + 0.55f * v.vel);
+    const float dyn = v.gain * v.bowGain * ovrGain * (0.45f + 0.55f * v.vel) * v.levComp;
     if (i == 0) leadBus = radiated * dyn;                    // force on the bridge
     else        famBus[v.family] += radiated * dyn;
   }
@@ -1311,13 +1441,13 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   // No limiter or automatic gain control: bow dynamics and transients pass through.
   s.dc2y = div - s.dc2x + 0.9995f * s.dc2y;
   s.dc2x = div;
-  s.outDivisi = s.dc2y * STR_OUT_GAIN;
+  s.outDivisi = strLimit(s.lim[1], s.dc2y * STR_OUT_GAIN);
 
   // full mix (SAMPLE OUT)
   const float out = lead + div;
   s.dcy = out - s.dcx + 0.9995f * s.dcy;
   s.dcx = out;
-  return s.dcy * STR_OUT_GAIN;
+  return strLimit(s.lim[0], s.dcy * STR_OUT_GAIN);
 }
 
 // clear all string and body states (instrument change)
