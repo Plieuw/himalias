@@ -9,11 +9,31 @@ on:
       - himalia-strings-beta
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   firmware:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Apply the pending release patch
+        run: |
+          set -e
+          if [ ! -f tmp/release.patch ]; then
+            echo "no patch to apply"
+            exit 0
+          fi
+          git config user.name "himalia-ci"
+          git config user.email "ci@users.noreply.github.com"
+          git apply tmp/release.patch
+          test "$(git hash-object IOCore/HimaliaSketch/strings_engine.h)" = "a7f79b9fb2bb65c159fa8f31005e1f943297de91"
+          test "$(git hash-object IOCore/HimaliaSketch/HimaliaSketch.ino)" = "1028a4dc4aa10ac67e5af6aed26976969edd17d0"
+          test "$(git hash-object STRINGS_BETA.md)" = "5d842687cb65da8bbdf2f0783b492a1bdd6670d4"
+          test "$(git hash-object firmware/README.md)" = "8b24a23ce278afc4b4c9ff639094bd0e286f4374"
+          git add -A
+          git commit -m "Strings v1.25.0-beta: grouped RATCHET models, flat register [skip ci]"
+          git push
       - name: Build the repository toolchain image
         run: docker build -t himalia-iocore IOCore
       - name: Compile firmware and convert to UF2
@@ -33,3 +53,19 @@ jobs:
           path: firmware-output/*
           if-no-files-found: error
           retention-days: 14
+      - name: Publish the beta release
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release]')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          VERSION=$(sed -n 's/.*HIMALIA_FW_VERSION "\([^"]*\)".*/\1/p' IOCore/HimaliaSketch/HimaliaSketch.ino | sed 's/-strings-beta//')
+          TAG="v${VERSION}-beta"
+          ASSET="Himalia_strings_v${VERSION}-beta.uf2"
+          cp firmware-output/HimaliaSketch.ino.uf2 "firmware-output/${ASSET}"
+          TARGET=$(git rev-parse HEAD)
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" \
+            --title "Himalia Strings ${TAG}" --target "$TARGET" --prerelease \
+            --notes "Bowed strings firmware for the Himalia module, built by CI from ${TARGET}. See STRINGS_BETA.md on the himalia-strings-beta branch."
+          gh release upload "$TAG" "firmware-output/${ASSET}" --clobber
+          echo "published ${TAG} with ${ASSET}"
