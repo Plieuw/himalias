@@ -1,4 +1,11 @@
-# Himalia Strings v1.34.0-beta
+# Himalia Strings v1.34.1-beta
+
+## Fix v1.34.1: VELOCITY-CV
+- Velocity is nu de piek van de eerste 25 ms van de noot. Eerder werd het niveau op het moment dat de gate openging (~0,4 V) genomen, waardoor elke noot even zacht was.
+- De stijgende CV werd daardoor ook als maximale aftertouch gelezen; aftertouch telt nu pas na die 25 ms, met een kleine dode zone tegen ruis.
+- Een stijgende CV wordt direct gevolgd (geen trage afvlakking meer bij de aanzet).
+
+# v1.34.0-beta
 
 Makkelijker te bespelen, en de bediening staat in een logische volgorde.
 

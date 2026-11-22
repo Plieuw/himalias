@@ -1,3 +1,4 @@
+#include <algorithm>
 // Host test for the Himalia strings engine (v2).
 // Checks every instrument x layout for finite, bounded, non-silent output,
 // solo intonation, pizzicato decay and tremolo.
@@ -418,6 +419,29 @@ int main() {
       if (k && !(s.v[0].at > 0.3f)) { std::printf("FAIL aftertouch not seen (%.2f)\n", s.v[0].at); ++fails; }
     }
     if (!(br[1] > br[0] * 1.01) || !(r[1] > r[0] * 1.08)) { std::printf("FAIL aftertouch: no brighter (%.3f, level %.3f)\n", br[1] / br[0], r[1] / r[0]); ++fails; }
+  }
+
+  // v1.34.1: the gate opens while the velocity CV still rises -> the note
+  // gets the peak, not the threshold level, and no false aftertouch
+  {
+    double lv[2]; const float tgt[2] = { 0.3f, 1.0f };
+    for (int k = 0; k < 2; ++k) {
+      stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.artic = ART_LEGATO; s.rootHz = 440.0f; stringsControl(s);
+      std::vector<float> o;
+      for (int n = 0; n < 40000; ++n) {
+        if ((n & 127) == 0) {                                  // the loop: CV rising in steps
+          const float r = std::min(1.0f, (float)n / 900.0f);
+          s.velocity = s.speedCV = 0.06f + (tgt[k] - 0.06f) * r;
+          stringsControl(s);
+        }
+        o.push_back(stringsTick(s, true));
+      }
+      lv[k] = rms(o, 20000, 40000);
+      if (std::fabs(s.v[0].vel - tgt[k]) > 0.02f) { std::printf("FAIL velocity caught %.2f vs %.2f\n", s.v[0].vel, tgt[k]); ++fails; }
+      if (std::fabs(s.v[0].at) > 0.01f) { std::printf("FAIL false aftertouch %.2f\n", s.v[0].at); ++fails; }
+    }
+    if (!(lv[1] > lv[0] * 1.6)) { std::printf("FAIL velocity range %.2f\n", lv[1] / lv[0]); ++fails; }
+    std::printf("velocity 0.3 vs 1.0: %.1f dB\n", 20 * std::log10(lv[1] / lv[0]));
   }
 
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }

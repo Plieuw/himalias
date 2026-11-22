@@ -29,6 +29,7 @@
 #endif
 
 #define STR_BEAT_TARGET (60.0f / 128.0f)   // preferred beat: the tempo lands nearest 128 BPM
+#define STR_VEL_WIN 0.025f  // v1.34.1: velocity = peak of the first 25 ms of a note
 #define STR_ONSETS 33       // gate starts kept for the rhythm analysis (32 intervals)
 #define STR_VOICES     6
 #define STR_NECK_LEN   2048          // nut side segment (lowest note ~ 23 Hz)
@@ -257,6 +258,7 @@ struct StrVoice {
   float vibIntent;                // vibrato intention for this note
   float vibGrow;                  // vibrato grows while the note lasts (0 -> 1)
   float levComp;                  // dynamic curve: level growth above normal is gentler
+  uint16_t velWin;                // v1.34.1: samples left to catch this note's velocity peak
   float at, atSl, atVib, atLev;   // aftertouch (v1.34): CV IN RATE change since the note start
   float relK;                     // smooth release speed of the bow
   uint32_t relN;                  // samples since the release
@@ -537,7 +539,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.alfT = 0.0f;
     v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = 0.0f;
     v.attackK = 1.0f / (0.075f * STR_SR);
-    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.levComp = 1.0f; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f;
+    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.levComp = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f;
     v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
     {                                                        // quarter-tone places, spread over the players
       static const float places[STR_VOICES] = { 0.125f, -0.5f, 0.75f, -1.0f, 0.375f, -0.25f };
@@ -931,7 +933,10 @@ static inline void stringsControl(StringsEngine &s) {
     // = more bow weight (grip, brighter) and a wider vibrato; easing off =
     // lighter and calmer. Without CV the level never moves, so nothing changes
     {
-      const float d = v.gate ? strClamp(s.velocity - v.vel, -0.8f, 0.8f) : 0.0f;
+      // only after the velocity is caught, with a small dead band against CV noise
+      float d = (v.gate && !v.velWin) ? s.velocity - v.vel : 0.0f;
+      d = d > 0.04f ? d - 0.04f : (d < -0.04f ? d + 0.04f : 0.0f);
+      d = strClamp(d, -0.8f, 0.8f);
       v.at += (d - v.at) * 0.3f;
       v.atSl = exp2f(-2.0f * v.at);
       v.atLev = 1.0f + 0.35f * v.at;                        // ~+1.3 dB per volt-ish of pressing
@@ -1296,6 +1301,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         if (!continuing) {
           v.strokeN = 0;
           v.vel = strClamp(s.velocity, 0.0f, 1.3f);             // dynamic gate: how hard this note
+          // v1.34.1: the gate opens while the CV is still rising (a sequencer
+          // step, a slewed or enveloped CV): the velocity is the peak of the
+          // first 25 ms, not the level at the threshold
+          v.velWin = (uint16_t)(STR_VEL_WIN * STR_SR);
           // Natural default: establish stable stick-slip gradually. Cello and
           // bass respond more slowly; velocity and articulation shape the time.
           const float familyTau = (v.family == FAM_CELLO) ? 0.090f
@@ -1350,6 +1359,11 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       }
     }
     v.strokeN++;
+    if (v.velWin) {                                          // catch the velocity peak
+      v.velWin--;
+      const float vn = strClamp(s.velocity, 0.0f, 1.3f);
+      if (vn > v.vel) v.vel = vn;
+    }
 
     // finger travel: speed computed at control rate (stringsControl)
     const float glideK = v.glideK;
