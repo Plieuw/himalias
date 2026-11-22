@@ -19,7 +19,7 @@ STEPS = [
   ]),
   ("3  De UITVOERING", (200, 110, 40), [
     ("GATE / knop", "Streek, pluk of slag. Gatelengte = informatie: lang/gebonden = legato, normaal = detache, kort = staccato, heel kort = spiccato."),
-    ("VELOCITY (0-10 V)", "Niveau bij de aanzet = hoe hard. Tijdens de noot = aftertouch: verder aandrukken geeft meer strijkgewicht, volume en vibrato; loslaten maakt lichter."),
+    ("VELOCITY (0-5 / 0-10 V)", "Met GATE: alleen velocity, 0 V = pp, nooit stil (bereik past zich aan). Zonder GATE: dynamische gate. Niveau bij de aanzet = hoe hard. Tijdens de noot = aftertouch: verder aandrukken geeft meer strijkgewicht, volume en vibrato; loslaten maakt lichter."),
     ("VIB / TREM / MUTE", "Vibrato aan/uit, tremolo, con sordino."),
     ("Automatisch", "Fraseboog + lange boog over 8 frases, zware tellen op afstreek, streekverdeling op de verwachte nootlengte, sectie volgt de concertmeester, vibrato reageert op tempo en sprongen."),
   ]),

@@ -18,7 +18,7 @@ CAP = {"pot": 12.8, "pot_s": 9.1}        # knob diameters on the original (for t
 ELEMENTS = [
   # left column: jacks
   ("jack", 8.39, 19.71, "NOISE CV",   "CV filter analoge ruis (hardware, ongewijzigd)", "noise"),
-  ("jack", 8.39, 32.93, "VELOCITY",   "Dynamische gate 0-10 V: niveau bij de aanzet = hoe hard; tijdens de noot = aftertouch (aandrukken); ook gate en tempo", "in"),
+  ("jack", 8.39, 32.93, "VELOCITY",   "Velocity (0-5 of 0-10 V, automatisch bereik): niveau bij de aanzet = hoe hard; tijdens de noot = aftertouch (aandrukken); ook gate en tempo", "in"),
   ("jack", 8.39, 46.15, "NOISE TRIG", "Trigger digitale ruis (hardware, niet gelezen door de firmware)", "noise"),
   ("jack", 8.39, 59.36, "GATE",       "Gate: streek / pluk / slag; gatelengte = articulatie (AUTO), het ritme geeft frase, tel en tempo", "in"),
   ("jack", 8.39, 72.58, "1V/OCT",     "Toonhoogte 1 V/oct, continu (geen quantizer)", "in"),

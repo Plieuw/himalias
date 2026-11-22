@@ -1,4 +1,11 @@
-# Himalia Strings v1.34.1-beta
+# Himalia Strings v1.34.2-beta
+
+## Fix v1.34.2: VELOCITY-jack viel stil
+- De jack is de oude DIGITAL NOISE pitch-CV: unipolair (0 V leest ~0). De firmware las hem als bipolair (0 V = midden), dus bijna elke spanning werd negatief = geen strijkstok = stilte.
+- Nu unipolair, met automatisch bereik: 0-5 V en 0-10 V bronnen gebruiken allebei het hele bereik.
+- Met GATE in gebruik (flank in de laatste 8 s) is de jack alleen velocity: 0 V = pp (~-13 dB), top ~+2 dB t.o.v. geen kabel. De klank valt nooit meer weg en een vastgehouden velocity houdt de gate niet meer open.
+- Zonder GATE: dynamische gate zoals voorheen.
+
 
 ## Fix v1.34.1: VELOCITY-CV
 - Velocity is nu de piek van de eerste 25 ms van de noot. Eerder werd het niveau op het moment dat de gate openging (~0,4 V) genomen, waardoor elke noot even zacht was.

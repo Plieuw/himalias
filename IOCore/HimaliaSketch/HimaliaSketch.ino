@@ -44,8 +44,12 @@
 //  3. The PERFORMANCE
 //   - TRIGGER in / button ......... gate: bow / pluck / strike. The gate length is
 //                                   information too (articulation, bow division)
-//   - CV IN RATE jack ............. dynamic gate / bow CV, 0 ... 10 V: the level at
-//                                   the note start is how hard the note is played;
+//   - CV IN RATE jack ............. VELOCITY (the factory digital-noise pitch CV,
+//                                   unipolar, auto range: 0-5 V and 0-10 V sources
+//                                   both work). With GATE in use: velocity
+//                                   only (0 V = pp, never silent). Without GATE:
+//                                   dynamic gate (the CV is the bow, 0 V = silence).
+//                                   The level at the note start is how hard it plays;
 //                                   changing it during the note is aftertouch (more
 //                                   = more bow weight and vibrato, less = lighter)
 //   - A/B button (squares side) ... A = vibrato, B = senza vibrato
@@ -75,7 +79,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.34.1-strings-beta"
+#define HIMALIA_FW_VERSION "1.34.2-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -99,6 +103,7 @@ static void seqStep(uint16_t change_adc, bool scaleB);
 #pragma GCC optimize ("O2")
 #include "strings_engine.h" // bowed strings physical model (v2)
 StringsEngine strings;
+volatile uint32_t trig_edges = 0;         // v1.34.2: rising edges on the GATE jack / button
 volatile bool strings_cv_bow = false;     // CV IN RATE patched and above ~0.25 V
 // Diagnose mode (hold the TRIGGER button while powering up): the divisi
 // output gives the CPU load as a voltage (0 ... +5 V = 0 ... 100 %), the
@@ -551,6 +556,7 @@ void renderAudio() {
     PORT->Group[PORTB].OUTSET.reg = 1ul << 31;
     if(!previous_trigger){          // check for edge
       seq_steps_pending++;  // clock the squares sequencer
+      trig_edges++;         // v1.34.2: the GATE input is in use
     }
     previous_trigger=true;
   }
@@ -663,29 +669,56 @@ void loop() {
   // An empty jack also reads high (normalled), just like a 10 V gate, so the
   // jack only counts as empty after reading high for 6 s without a break
   // since it was last below that (a 10 V gate plays at full strength).
+  // v1.34.2: this jack is the factory DIGITAL NOISE pitch CV: a unipolar
+  // input (0 V reads ~0, the factory firmware adds it straight to the knob),
+  // NOT a bipolar CV like the others (0 V = 2028). Read as bipolar, every
+  // voltage under ~9.7 V came out negative = no bow = silence.
+  // The level is scaled to the highest reading seen (auto range, slowly
+  // forgotten), so 0-5 V and 0-10 V velocity sources both use the full range.
   static bool     cv_rate_patched = false;
   static uint32_t cv_rate_low_ms  = 0;
+  static float    cv_rate_top     = 1500.0f;            // auto range (ADC counts)
   const uint32_t now_ms = millis();
-  float rate_volts;
+  float rate_lvl;                                        // 0 ... 1
   if(bow_cv_adc < SYNC_UNPATCHED){
     cv_rate_patched = true;
     cv_rate_low_ms  = now_ms;
-    rate_volts = cvVolts(bow_cv_adc);
+    const float a = (float)bow_cv_adc;
+    if(a > cv_rate_top) cv_rate_top = a;
+    else cv_rate_top += (1500.0f - cv_rate_top) * 0.00002f;   // forget a peak over ~minutes, never below 1500
+    rate_lvl = a / cv_rate_top;
   } else {
     if(cv_rate_patched && now_ms - cv_rate_low_ms > 6000) cv_rate_patched = false;
-    rate_volts = 10.0f;                                  // at / above the top of the input
+    rate_lvl = 1.0f;                                     // at / above the top of the input
   }
+  // v1.34.2: two ways to use it, chosen by what is patched:
+  //  - GATE jack / button in use (an edge in the last 8 s): VELOCITY only.
+  //    The gate comes from GATE; 0 V = pianissimo, 10 V = fortissimo, the
+  //    bow never stops, so a low or 0 V velocity CV can never mute the module
+  //    (before, the CV was the bow itself: 0 V = no bow = silence, and a held
+  //    velocity also held the gate open)
+  //  - no GATE: dynamic gate as before (the CV is the bow: 0 V = silence)
+  static uint32_t trig_seen = 0, trig_ms = 0;
+  if(trig_edges != trig_seen){ trig_seen = trig_edges; trig_ms = now_ms ? now_ms : 1; }
+  const bool gate_in_use = trig_ms && now_ms - trig_ms < 8000;
   if(cv_rate_patched){
-    float c = rate_volts * (1.25f / 9.8f);               // 0 ... 10 V -> 0 ... full (1.25)
+    float c = rate_lvl * 1.25f;                          // 0 ... top -> 0 ... full (1.25)
     if(c < 0.0f) c = 0.0f;
     if(c > 1.25f) c = 1.25f;
     static float cs = 0.0f;
     cs += (c - cs) * (c > cs ? 0.8f : 0.3f);             // v1.34.1: follow a rising CV at once (velocity)
-    strings.speedCV  = cs;
-    strings.velocity = cs;                               // sampled per note by the engine
-    const bool was = strings_cv_bow;
-    strings_cv_bow = strings_cv_bow ? (cs > 0.03f) : (cs > 0.05f);   // with hysteresis
-    if(strings_cv_bow && !was) seq_steps_pending++;      // a dynamic gate also steps the divisi
+    if(gate_in_use){
+      // 0 V ~ -13 dB (pp), top ~ +2 dB against no cable (measured on the model)
+      strings.velocity = 0.2f + 0.8f * cs;               // sampled per note by the engine
+      strings.speedCV  = 0.45f + 0.6f * cs;              // pp ... ff bow, never silent
+      strings_cv_bow  = false;
+    } else {
+      strings.velocity = cs;
+      strings.speedCV  = cs;
+      const bool was = strings_cv_bow;
+      strings_cv_bow = strings_cv_bow ? (cs > 0.03f) : (cs > 0.05f);   // with hysteresis
+      if(strings_cv_bow && !was) seq_steps_pending++;    // a dynamic gate also steps the divisi
+    }
   } else {
     strings.speedCV  = 1.0f;
     strings.velocity = 1.0f;
