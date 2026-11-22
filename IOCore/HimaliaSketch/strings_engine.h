@@ -29,6 +29,7 @@
 #endif
 
 #define STR_BEAT_TARGET (60.0f / 128.0f)   // preferred beat: the tempo lands nearest 128 BPM
+#define STR_SLIDE_MAX 12.0f  // v1.35: longest slide on one string (semitones)
 #define STR_VEL_WIN 0.025f  // v1.34.1: velocity = peak of the first 25 ms of a note
 #define STR_ONSETS 33       // gate starts kept for the rhythm analysis (32 intervals)
 #define STR_VOICES     6
@@ -89,7 +90,7 @@ enum StrCharacter : uint8_t { CHR_CLASSICAL = 0, CHR_ROMANTIC, CHR_FILM, CHR_COU
 struct StrCharDef {
   float expr;     // phrase shaping depth (energy, attack, vibrato intention)
   float arc;      // depth of the long arc over 8 phrases
-  float glide;    // legato finger slides (> 1 = slower, more audible)
+  float glide;    // shifts / portamento time (> 1 = slower, more audible)
   float attack;   // attack placement (> 1 = gentler)
   float beat;     // extra weight on heavy beats
 };
@@ -267,6 +268,8 @@ struct StrVoice {
   // (short notes) or lifts off (long notes); later the finger lifts
   float lenNext, ringNext, openNext;   // targets for the next note (from control)
   float openLen;                  // open string under this note (finger lifted)
+  float slideSemis;               // v1.35: size of the current finger move (semitones)
+  float slideOpen;                // v1.35: the string the finger is on (its open length, 0 = lowest)
   float attackK;                  // smooth, instrument-aware bow attack coefficient
   float relRamp;                  // release: the bow starts to slow down gently (0 -> 1)
   float glideK;                   // finger travel speed (computed at control rate)
@@ -555,7 +558,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.bowLenInv = 1.0f / (v.bowLen * STR_SR);
     v.turn = 0; v.slip = 0.0f; v.tBp1 = v.tBp2 = 0.0f;
     v.alfT = 0.0f;
-    v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = 0.0f;
+    v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = v.slideOpen = 0.0f; v.slideSemis = 0.0f;
     v.attackK = 1.0f / (0.075f * STR_SR);
     v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f;
     v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
@@ -766,6 +769,26 @@ static inline void stringsTempo(StringsEngine &s) {
   }
 }
 
+// v1.35: a legato pitch change while the note sounds. A finger can only
+// slide along ONE string: the new note has to lie on the string the finger
+// is on (at or above its open pitch) and within an octave. Otherwise the
+// player crosses to the string of the new note: the pitch changes at once
+// (with a soft finger click), no slide across strings.
+static inline void strFingerMove(StringsEngine &s, StrVoice &v, float newLen, float newOpen) {
+  const float semis = 12.0f * log2f(strClamp(v.len, 1.0f, 1e5f) / strClamp(newLen, 1.0f, 1e5f));
+  if (fabsf(semis) < 0.4f) { v.lenTarget = newLen; return; }            // drift, vibrato centre: nothing to decide
+  const bool onString = v.slideOpen <= 0.0f || newLen <= v.slideOpen * 1.01f;
+  if (onString && fabsf(semis) <= STR_SLIDE_MAX) {
+    if (fabsf(newLen - v.lenTarget) > 0.01f * newLen) v.slideSemis = fabsf(semis);   // a new move
+    v.lenTarget = newLen;                                    // slide on the same string
+    v.openLen = v.slideOpen > 0.0f ? v.slideOpen : newOpen;  // the finger stays on it
+  } else {
+    v.len = v.lenTarget = v.fingerLen = newLen;              // string crossing: no slide
+    v.openLen = v.slideOpen = newOpen;
+    v.tran += 0.004f * (0.5f + 0.5f * strClamp(v.vel, 0.0f, 1.0f)) * (0.9f + 0.1f * strRand(s));
+  }
+}
+
 // v1.34: the articulation in use. AUTO = from the gate length; the bowed
 // strokes detache ... spiccato follow the gate length around the knob's
 // choice (a long gate one step more connected, a short one shorter);
@@ -908,17 +931,24 @@ static inline void stringsControl(StringsEngine &s) {
     // energy shape the glide; the cello's finger has more weight
     {
       const StrArticDef &AA = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : (uint8_t)ART_LEGATO];
+      // v1.35 realistic finger moves on one string (crossings jump, see
+      // strFingerMove):
+      //  - portamento: an audible slide, longer for bigger intervals
+      //  - legato: inside the hand (up to a major third) the finger just
+      //    drops, ~10 ms; a shift to another position is a short, light
+      //    slide (~35-80 ms, the romantic player lets it be heard more)
       float gk = AA.glide;
-      if (AA.legato && v.gate && v.env > 0.05f && AA.glide > 0.0f) {
-        const float intervalSemis = 12.0f * fabsf(log2f(v.lenTarget / strClamp(v.len, 8.0f, (float)(STR_NECK_LEN - 8))));
-        const float intervalFactor = strClamp(0.78f + 0.095f * intervalSemis, 0.78f, 1.95f);
-        const float phraseFactor = sqrtf(strClamp(s.noteDur / 0.6f, 0.55f, 1.65f));
-        const float expressionFactor = 1.15f - 0.30f * adaptiveDrive;
+      if (AA.legato && AA.glide > 0.0f) {
+        const float iv = v.slideSemis;
         const float weight = (fam == FAM_CELLO) ? 1.15f : (fam == FAM_BASS ? 1.25f : 1.0f);
-        const float timeFactor = strClamp(intervalFactor * phraseFactor * expressionFactor * weight, 0.55f, 2.8f);
-        gk = strClamp(AA.glide / timeFactor, AA.glide * 0.30f, AA.glide * 1.8f);
+        float tau;
+        if (art == ART_PORTAMENTO) tau = (0.10f + 0.012f * iv) * weight;                 // 0.1 ... 0.25 s
+        else if (iv <= 4.0f)       tau = 0.010f;                                          // finger drop
+        else                       tau = (0.030f + 0.004f * iv) * weight;                 // a shift
+        if (art == ART_PORTAMENTO || iv > 4.0f) tau *= s.glideMul;                       // character: audible shifts
+        gk = 1.0f / (strClamp(tau, 0.006f, 0.4f) * STR_SR);
       }
-      v.glideK = strClamp(gk * s.glideMul, 0.00005f, 0.05f);
+      v.glideK = strClamp(gk, 0.00005f, 0.05f);
     }
     // dynamic curve (HAESE P(D)): above normal playing the level grows ~30 %
     // as steeply (the tone still gets brighter and grippier), below normal it
@@ -979,8 +1009,10 @@ static inline void stringsControl(StringsEngine &s) {
     }
     // while a note is released it keeps its pitch (a sequencer may already
     // be on the next note); the next gate takes the new one
-    if (v.gate || v.relN > (uint32_t)(3.0f * STR_SR)) {
-      v.lenTarget = v.lenNext; v.ringLoss = v.ringNext; v.openLen = v.openNext;
+    if (v.gate && v.env > 0.05f && !v.fingerOff) {
+      strFingerMove(s, v, v.lenNext, v.openNext); v.ringLoss = v.ringNext;   // pitch moves under a held note
+    } else if (v.gate || v.relN > (uint32_t)(3.0f * STR_SR)) {
+      v.lenTarget = v.lenNext; v.ringLoss = v.ringNext; v.openLen = v.slideOpen = v.openNext;
     }
 
     // family balance in the full section, at the same pitch
@@ -1294,8 +1326,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       }
       if (gate) {
         v.fingerOff = false;
-        v.lenTarget = v.lenNext; v.ringLoss = v.ringNext; v.openLen = v.openNext;
         const bool continuing = (A.legato || s.brain.connected) && v.env > 0.05f;   // same bow
+        v.ringLoss = v.ringNext;
+        if (continuing && !v.fingerOff) strFingerMove(s, v, v.lenNext, v.openNext);   // slide or cross
+        else { v.lenTarget = v.lenNext; v.openLen = v.slideOpen = v.openNext; }
         v.peT = s.brain.energy;                                // phrase shaping, also on tied notes
         if (continuing) { v.vibGrow *= 0.7f; v.vibIntent = 0.5f * (v.vibIntent + s.brain.vibIntent); }
         if (continuing) v.tran += 0.006f * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.0f)); // quiet finger / bow change

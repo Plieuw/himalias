@@ -29,5 +29,12 @@ Het karakter stuurt de adaptive playing (HAESE): hoe de speler de frase leest.
 - ARTIC is altijd articulatie. Er zijn geen modellen met een vaste articulatie meer.
 - SPREAD is op een solist de expressiediepte (keer het karakter) en op een ensemble de layout.
 
+## Glijden en legato zoals op een echte snaar
+- Een slide kan alleen over **één snaar** en hooguit een octaaf. Ligt de nieuwe noot onder de lege snaar waar de vinger op staat, of verder dan een octaaf, dan kruist de speler naar de andere snaar. De toon verspringt dan direct (met een zachte vingertik), zonder glijden over snaren heen.
+- Omhoog blijft de speler op dezelfde snaar zolang dat kan (opschuiven in positie). Pas als het niet meer gaat, wisselt hij van snaar.
+- **Legato** binnen de hand (tot een grote terts): de vinger valt, ongeveer 10 ms, geen hoorbare glijder.
+- **Legato met positiewissel** (een kwart of meer op dezelfde snaar): een korte, lichte glijder van 35-80 ms. Romantisch maakt die hoorbaarder, klassiek korter.
+- **Portamento**: een bewuste glijder van 0,1-0,25 s, langer bij grotere intervallen. Ook alleen op één snaar.
+
 ## Overig
 - Alle 21 modellen zijn even luid gemaakt: ze zijn gemeten met frases en daarna gelijkgetrokken.

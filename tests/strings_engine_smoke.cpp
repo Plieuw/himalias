@@ -446,8 +446,55 @@ int main() {
     std::printf("velocity 0.3 vs 1.0: %.1f dB\n", 20 * std::log10(lv[1] / lv[0]));
   }
 
+  // v1.35: a slide only along one string, at most an octave
+  {
+    struct Sl { float from, to; bool slide; const char *name; };
+    const Sl sl[] = {
+      { 440.0f, 587.3f, true,  "A4 -> D5 on the A string: slide" },
+      { 587.3f, 659.3f, true,  "D5 -> E5 stays on the A string: slide" },
+      { 440.0f, 261.6f, false, "A4 -> C4 is below the A string: cross" },
+      { 392.0f, 987.8f, false, "G4 -> B5 more than an octave: no slide" },
+    };
+    for (const Sl &c : sl) {
+      stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.artic = ART_LEGATO; s.rootHz = c.from; stringsControl(s);
+      for (int n = 0; n < 30000; ++n) { if ((n & 127) == 0) stringsControl(s); stringsTick(s, true); }
+      const float l0 = s.v[0].len;
+      s.rootHz = c.to;
+      for (int n = 0; n < 480; ++n) { if ((n & 127) == 0) stringsControl(s); stringsTick(s, true); }   // 10 ms
+      const float done = (l0 - s.v[0].len) / (l0 - s.v[0].lenTarget + 1e-9f);
+      const bool slid = std::fabs(s.v[0].len - s.v[0].lenTarget) > 0.02f * std::fabs(l0 - s.v[0].lenTarget);
+      if (slid != c.slide) { std::printf("FAIL %s (%.2f done after 10 ms)\n", c.name, done); ++fails; }
+    }
+  }
+
+  // v1.35 legato: a finger drop inside the hand is quick, a shift is a short
+  // slide, portamento a long one
+  {
+    struct Lg { uint8_t art; float to; float t10, t60; const char *name; };   // fraction done after 10 / 60 ms
+    auto run = [&](uint8_t art, float to, float &f10, float &f60) {
+      stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.artic = art; s.rootHz = 440.0f; stringsControl(s);
+      for (int n = 0; n < 30000; ++n) { if ((n & 127) == 0) stringsControl(s); stringsTick(s, true); }
+      const float l0 = s.v[0].len; s.rootHz = to;
+      for (int n = 0; n < 2880; ++n) {
+        if ((n & 127) == 0) stringsControl(s);
+        stringsTick(s, true);
+        const float f = (l0 - s.v[0].len) / (l0 - s.v[0].lenTarget);
+        if (n == 479) f10 = f;
+        if (n == 2879) f60 = f;
+      }
+    };
+    float a10, a60, b10, b60, c10, c60;
+    run(ART_LEGATO, 493.9f, a10, a60);       // A4 -> B4: finger drop
+    run(ART_LEGATO, 659.3f, b10, b60);       // A4 -> E5 on the A string: a shift
+    run(ART_PORTAMENTO, 659.3f, c10, c60);   // portamento
+    if (!(a10 > 0.5f && a60 > 0.97f)) { std::printf("FAIL legato finger drop %.2f %.2f\n", a10, a60); ++fails; }
+    if (!(b10 < a10 && b60 > 0.6f))   { std::printf("FAIL legato shift %.2f %.2f\n", b10, b60); ++fails; }
+    if (!(c60 < b60))                 { std::printf("FAIL portamento slower than a shift %.2f %.2f\n", c60, b60); ++fails; }
+    std::printf("legato drop %.0f%%/10ms, shift %.0f%%/60ms, portamento %.0f%%/60ms\n", a10 * 100, b60 * 100, c60 * 100);
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }
