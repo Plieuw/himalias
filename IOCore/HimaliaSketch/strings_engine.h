@@ -1012,7 +1012,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
                  * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) * transientDynamics;
           // The onset noise now follows note dynamics, with a lower ceiling;
           // bow attacks are especially restrained while pluck character remains.
-          if (A.mode == MODE_BOW) v.tran *= 0.35f;
+          if (A.mode == MODE_BOW) v.tran *= 0.06f;
           if (A.alternate) v.dir = -v.dir;                    // up-bow / down-bow
           // A legato finger change keeps the current string length and slides to the new pitch.
           // Detached/retriggered notes start directly at their target pitch.
