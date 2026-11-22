@@ -1,6 +1,7 @@
 # Himalia Strings v1.27.0-beta
 
 - Raised the calibrated digital output gain from 0.60 to 0.72 (+20%, approximately +1.6 dB). No limiter, compressor, or automatic gain control was added.
+- Raised the solo violin model gain from 0.578 to 0.850 and solo viola from 0.792 to 0.950, because the host report showed these two solo models had usable peak headroom. Solo cello gain is unchanged.
 - Updated the host loudness/peak report to use the same 0.72 gain so the CI peak-headroom check tests the actual firmware calibration.
 - Replaced the per-voice linear-congruential bow-noise generator with xorshift32, matching the better-quality PRNG already used elsewhere in the engine. This aims to reduce patterned/tonal noise that can resemble a digital clock whine.
 - Kept the v1.26 body resonance voicing and all CV, articulation, pitch-glide, and ensemble mappings unchanged.
