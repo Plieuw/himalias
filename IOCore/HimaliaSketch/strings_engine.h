@@ -153,7 +153,7 @@ static const StrModelDef STR_MODELS[MDL_COUNT] = {
   { INS_LOW_STRINGS,    ART_SPICCATO,  LAY_OCTAVES,   0, 0.0f, 1.0f,  0.0f, 0,   3.5f,  0.2f, 0.25f, 1.773f, 0.0f, 0.0f },  // epic ostinato
   { INS_VIOLIN_SECTION, ART_PONTICELLO,LAY_CLUSTER,   1, 0.2f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.162f, 0.0f, 0.0f },  // suspense
   // 17-18: experimental
-  { INS_SOLO_CELLO,     -1,            -1,           -1, 0.3f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.153f, 1.0f, 0.0f },  // overpressure (ALF)
+  { INS_SOLO_CELLO,     -1,            -1,           -1, 0.3f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.100f, 1.0f, 0.0f },  // overpressure (ALF)
   { INS_VIOLIN_SECTION, -1,            LAY_UNISON,   -1, 0.25f,1.0f,  1.0f, 0,   1.0f,  1.2f, 1.0f, 1.079f, 0.0f, 2.0f },  // Threnody swarm
 };
 
