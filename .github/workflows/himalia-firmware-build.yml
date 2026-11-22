@@ -8,6 +8,7 @@ on:
       - himalia-strings-v1.27.0-beta
       - himalia-strings-v1.28.0-beta
       - himalia-strings-v1.29.0-beta
+      - himalia-strings-v1.30.0-beta
   pull_request:
     branches:
       - himalia-strings-beta
