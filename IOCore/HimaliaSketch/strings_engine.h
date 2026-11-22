@@ -1028,10 +1028,22 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     }
     v.strokeN++;
 
-    // Continuous finger travel: keep the fractional string length between notes.
-    // The target is never rounded to a semitone; each active voice follows its own
-    // legato slide, including the independently timed ensemble players.
-    v.len += (v.lenTarget - v.len) * A.glide;
+    // Adaptive musical finger travel. Only connected/legato articulations slide;
+    // detached notes were placed directly at the new pitch above. The interval,
+    // phrase length and playing energy shape the glide time, without quantising
+    // the pitch or tying it to BPM. Each ensemble player retains its own timing.
+    float glideK = A.glide;
+    if (A.legato && v.gate && v.env > 0.05f && A.glide > 0.0f) {
+      const float intervalSemis = 12.0f * fabsf(log2f(v.lenTarget / strClamp(v.len, 8.0f, (float)(STR_NECK_LEN - 8))));
+      const float intervalFactor = strClamp(0.78f + 0.095f * intervalSemis, 0.78f, 1.95f);
+      const float phraseFactor = sqrtf(strClamp(s.noteDur / 0.6f, 0.55f, 1.65f));
+      const float energy = strClamp(0.45f * s.speed + 0.35f * s.pressure
+                                  + 0.20f * strClamp(s.velocity / 1.25f, 0.0f, 1.0f), 0.0f, 1.0f);
+      const float expressionFactor = 1.15f - 0.30f * energy;
+      const float timeFactor = strClamp(intervalFactor * phraseFactor * expressionFactor, 0.55f, 2.8f);
+      glideK = strClamp(A.glide / timeFactor, A.glide * 0.30f, A.glide * 1.8f);
+    }
+    v.len += (v.lenTarget - v.len) * glideK;
 
     // bow envelope: attack per articulation, release ~60 ms; staccato and
     // spiccato lift the bow after a fixed stroke even if the gate stays high
