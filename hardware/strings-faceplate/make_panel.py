@@ -129,8 +129,8 @@ for kind, x, y, label, func, grp in ELEMENTS:
         dx, dy = LABEL_POS.get(label, (0, -(cap / 2 + 4.0)))[:2]
         text(lab, x + dx, y + dy, h=1.45, th=0.24)
 
-# MODEL: the scale numbers 1 / 7 / 11 / 16 / 18 mark the groups
-# (instruments 1-7, playing styles 8-11, film gestures 12-16, experimental 17-18)
+# MODEL: 7 instruments, each 3 positions (classical / romantic / film)
+# (VL/VC solo, VL+ VA+ VC+ sections, LOW celli+basses, TUT full strings)
 
 # small legend at the bottom: what the marks mean
 text("~ analog noise (hardware)", 40.0, 10.3, h=0.85, th=0.13, just=-1)

@@ -329,16 +329,18 @@ int main() {
     if (!startAfterRest || attRest <= 1.0f || attFirst <= 1.0f) { std::printf("FAIL phrase start after a rest\n"); ++fails; }
   }
 
-  // v1.33: knobs a model does not need get a model-specific job
+  // v1.35: 7 instruments x 3 characters; SPREAD = expression on a soloist,
+  // layout on an ensemble; the character shapes the interpretation
   {
-    stringsInit(s); s.instrument = MDL_TRILL_SECTION; s.knobArt = 1.0f; stringsControl(s);
-    if (s.trillMode != 3) { std::printf("FAIL trill interval knob\n"); ++fails; }
     stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.knobSpread = 0.0f; stringsControl(s);
-    if (s.expr != 0.0f) { std::printf("FAIL expression knob on a solo model\n"); ++fails; }
+    if (s.expr != 0.0f) { std::printf("FAIL expression knob on a soloist\n"); ++fails; }
     stringsInit(s); s.instrument = MDL_VIOLIN_SECTION; s.knobSpread = 0.0f; stringsControl(s);
-    if (s.expr != 1.0f) { std::printf("FAIL SPREAD must stay the layout on a free section\n"); ++fails; }
-    stringsInit(s); s.instrument = MDL_THRENODY; s.knobSpread = 1.0f; stringsControl(s);
-    if (!(s.swarmW > 3.0f)) { std::printf("FAIL swarm width knob\n"); ++fails; }
+    if (std::fabs(s.expr - STR_CHAR[CHR_CLASSICAL].expr) > 1e-6f) { std::printf("FAIL SPREAD must stay the layout on a section\n"); ++fails; }
+    stringsInit(s); s.instrument = MDL_SOLO_CELLO_ROM; s.knobSpread = 0.5f; stringsControl(s);
+    const float gRom = s.glideMul, eRom = s.expr;
+    stringsInit(s); s.instrument = MDL_SOLO_CELLO; s.knobSpread = 0.5f; stringsControl(s);
+    if (!(gRom > s.glideMul && eRom > s.expr)) { std::printf("FAIL romantic character\n"); ++fails; }
+    if (MDL_COUNT != 21) { std::printf("FAIL model count\n"); ++fails; }
   }
 
   // v1.34: gate length -> articulation (AUTO), the knob as the base, a
@@ -446,6 +448,6 @@ int main() {
 
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, model knob jobs, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

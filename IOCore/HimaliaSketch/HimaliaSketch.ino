@@ -6,14 +6,16 @@
 //  the PERFORMANCE that drives it.
 //
 //  1. WHAT plays
-//   - RATCHET knob ................ model (18): the instruments (solo violin,
-//                                   solo viola, solo cello, violin / viola / cello
-//                                   section, full strings), the playing styles
-//                                   (molto vibrato, romantic cello, tremolo, trill),
-//                                   the film-score gestures from calm to driving
-//                                   (shimmer, emotional swell, heroic theme, epic
-//                                   ostinato, suspense), then experimental
-//                                   (overpressure, Threnody swarm)
+//   - RATCHET knob ................ model (21): 7 instruments, each in 3 playing
+//                                   characters (classical / romantic / film):
+//                                   solo violin, solo cello, violin section, viola
+//                                   section, cello section, celli + basses, full
+//                                   strings. Turn a little = another character,
+//                                   further = another instrument. The character is
+//                                   how the player interprets the phrase: classical
+//                                   clean and controlled; romantic singing, more
+//                                   vibrato and slides; film broad, swelling long
+//                                   notes, weight on the heavy beats
 //   - SAMPLE TUNE knob + CV ....... pitch: the knob spans the instrument's real
 //                                   range (left = lowest open string), CV 1 V/oct
 //   - SPREAD knob + CV ............ layout: unison, octaves, fifths, major, minor,
@@ -79,7 +81,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.34.2-strings-beta"
+#define HIMALIA_FW_VERSION "1.35.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"

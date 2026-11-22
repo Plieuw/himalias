@@ -8,7 +8,7 @@ panel = Image.open("Himalia_Strings_faceplate_preview.png").convert("RGB")
 ph = 1700; panel = panel.resize((int(panel.width * ph / panel.height), ph))
 STEPS = [
   ("1  WAT speelt er", (52, 120, 200), [
-    ("MODEL", "18 modellen: instrumenten (solo viool / altviool / cello, secties, tutti) -> speelstijlen -> filmgebaren van rustig naar drijvend -> experimenteel."),
+    ("MODEL", "7 instrumenten x 3 speelkarakters: VL solo viool, VC solo cello, VL+ violen, VA+ altviolen, VC+ celli, LOW celli+bassen, TUT tutti. Per instrument: klassiek (strak), romantisch (zingend, meer vibrato en glijders), film (breed, zwellende lange noten, zware tellen)."),
     ("PITCH + 1V/OCT", "Toonhoogte over het echte bereik van het instrument; CV 1 V/oct erbovenop."),
     ("SPREAD + CV", "Layout: unisono, octaven, kwinten, groot, klein, divisi groot/klein, cluster. Solo of vaste layout: expressiediepte (links neutraal, midden natuurlijk, rechts heel expressief)."),
   ]),
@@ -30,7 +30,7 @@ STEPS = [
 ]
 W = panel.width + 1250; H = ph + 140
 im = Image.new("RGB", (W, H), (248, 248, 246)); d = ImageDraw.Draw(im)
-d.text((40, 30), "Himalia Strings v1.34 - bedienen in speelvolgorde", font=f_t, fill=(20, 20, 20))
+d.text((40, 30), "Himalia Strings v1.35 - bedienen in speelvolgorde", font=f_t, fill=(20, 20, 20))
 im.paste(panel, (40, 110))
 x0 = panel.width + 90; y = 120
 for title, col, items in STEPS:

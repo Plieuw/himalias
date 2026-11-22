@@ -42,7 +42,7 @@ ELEMENTS = [
   ("led",    32.81, 38.54, "",           "Gate-LED", "ctl"),
   ("pot",    29.39, 66.04, "PITCH",      "Toonhoogte over het echte bereik van het instrument", "ctl"),
   ("pot_s",  53.55, 66.15, "ZONE",       "Speelzone: toets (zacht, donker) ... kam (luid, helder)", "ctl"),
-  ("pot_s",  33.74, 86.76, "MODEL",      "Model 1-18: instrumenten, stijlen, filmgebaren, experimenteel", "ctl"),
+  ("pot_s",  33.74, 86.76, "MODEL",      "Model: 2 solo + 5 ensembles, elk in 3 speelkarakters (klassiek, romantisch, film)", "ctl"),
   ("button", 57.20, 86.82, "MUTE",       "Con sordino (demper)", "ctl"),
   ("pot",    29.53, 112.12, "SPREAD",    "Layout; bij solo / vaste layout: expressie; zwerm- / clusterbreedte", "ctl"),
   ("pot",    53.62, 112.11, "ARTIC",     "Articulatie (12): AUTO = gatelengte beslist, dan lang -> kort -> klankkleur; bij vaste articulatie: gebaar van het model", "ctl"),
@@ -55,7 +55,7 @@ SCALES = {
   "ZONE":      ["TASTO", "", "NORM", "", "PONT"],
   "SPREAD":    ["UNI", "OCT", "5TH", "MAJ", "MIN", "DIV+", "DIV-", "CLU"],
   "ARTIC":     ["AUTO", "POR", "LEG", "DET", "MAR", "STA", "SPI", "PIZ", "FLA", "TAS", "PON", "COL"],
-  "MODEL":     ["1", "", "", "", "", "", "7", "", "", "", "11", "", "", "", "", "16", "", "18"],
+  "MODEL":     ["", "VL", "", "", "VC", "", "", "VL+", "", "", "VA+", "", "", "VC+", "", "", "LOW", "", "", "TUT", ""],
   "NOISE MIX": ["RED", "", "WHT", "", "BLU"],
 }
-MODEL_GROUPS = [(1, 7, "INSTR"), (8, 11, "STYLE"), (12, 16, "FILM"), (17, 18, "EXP")]
+MODEL_GROUPS = [(1, 6, "SOLO"), (7, 21, "ENSEMBLE")]   # each instrument: classical / romantic / film
