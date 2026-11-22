@@ -1,9 +1,13 @@
 name: Cello family level
 
-# One-off: raises the four cello rows in STR_MODELS[] by 1.35 (2.6 dB) and then
-# removes itself, so the commit it leaves behind contains only the engine change.
+# One-off: raises the four cello rows in STR_MODELS[] by 1.35 (2.6 dB), then
+# removes itself, so the commit it leaves behind holds only the engine change.
+# Triggered by the marker file below because workflow_dispatch only works for
+# workflows that also exist on the default branch.
 on:
-  workflow_dispatch:
+  push:
+    paths:
+      - '.github/cello-gain-trigger'
 
 permissions:
   contents: write
@@ -13,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: himalia-strings-beta
       - name: Raise the cello rows by 1.35
         run: |
           set -e
@@ -51,4 +57,4 @@ jobs:
           git rm -q .github/workflows/cello-gain.yml
           git add IOCore/HimaliaSketch/strings_engine.h
           git commit -m "Cello family: +2.6 dB so it sits within ~2 dB of the violin"
-          git push
+          git push origin HEAD:himalia-strings-beta
