@@ -324,6 +324,14 @@ struct StringsEngine {
   StrAir airF;
   StrSym sym[2];                  // sympathetic strings: player 1, divisi
   StrBrain brain;                 // HAESE: interpretation of the gate / pitch phrase
+  // knobs a model does not need get a model-specific job (v1.33)
+  float knobArt;                  // SQUARES MAIN TUNE knob + CV, 0 ... 1
+  float knobSpread;               // SPREAD knob + CV, 0 ... 1
+  float expr;                     // expression depth: 0 neutral, 1 natural, 2 very expressive
+  float swarmW;                   // Threnody swarm width (semitones)
+  float clusterW;                 // suspense: cluster width factor (0 = off)
+  float glideMul, tremMul, strokeMul, accentMul, swellMul;
+  uint8_t trillMode;              // 1 = semitone, 2 = whole tone, 3 = minor third
   struct Lim { float d[STR_LIM_LOOK]; float pk, g; uint8_t w, hold; } lim[2];   // safety net
   float tuneRatio;                // how far the pitch CV sits from A = 440 (the open strings follow)
   // control (written from loop)
@@ -546,6 +554,8 @@ static inline void stringsInit(StringsEngine &s) {
   s.instrument = MDL_SOLO_VIOLIN; s.layout = LAY_UNISON; s.maxVoices = STR_VOICES;
   s.trillPh = 0; s.trillInc = 9.0f / STR_SR; s.trillPrev = false;
   s.model = STR_MODELS[0]; s.articEff = ART_LEGATO;
+  s.knobArt = 0.5f; s.knobSpread = 0.5f; s.expr = 1.0f; s.swarmW = 0.0f; s.clusterW = 0.0f;
+  s.glideMul = s.tremMul = s.strokeMul = s.accentMul = s.swellMul = 1.0f; s.trillMode = 0;
   s.divisiMask = 0x3F;
   s.tuneRatio = 1.0f;
   for (int k = 0; k < 2; k++) {
@@ -721,6 +731,35 @@ static inline void stringsControl(StringsEngine &s) {
                   : (M.artic >= 0 ? (uint8_t)M.artic : (s.artic < ART_COUNT ? s.artic : 0));
   s.articEff = art;
   const StrArticDef &A = STR_ARTIC[art];
+  // ---- knobs a model does not use get a job that fits the model
+  //      SPREAD: no layout to choose (solo, or the model fixes it) ->
+  //        expression depth; Threnody: swarm width; suspense: cluster width
+  //      SQUARES MAIN TUNE: the model fixes the articulation -> a gesture
+  {
+    const uint8_t mdl = s.instrument;
+    const bool spreadFree = solo || M.layout >= 0;
+    const float g = strClamp(s.knobArt, 0.0f, 1.0f), sp = strClamp(s.knobSpread, 0.0f, 1.0f);
+    const float oct2 = exp2f(2.0f * (g - 0.5f));             // 0.5x ... 1x (centre) ... 2x
+    s.expr = 1.0f; s.swarmW = M.swarm; s.clusterW = 0.0f;
+    if (mdl == MDL_THRENODY)      s.swarmW = M.swarm * (0.25f + 1.5f * sp);   // 0.5 ... 3.5 semitones
+    else if (mdl == MDL_SUSPENSE) s.clusterW = 0.2f + 1.6f * sp;            // cluster 0.2x ... 1.8x as wide
+    else if (spreadFree)          s.expr = 2.0f * sp;
+    s.glideMul = s.tremMul = s.strokeMul = s.accentMul = s.swellMul = 1.0f;
+    s.trillMode = M.trill;
+    if (M.artic >= 0) {
+      switch (mdl) {
+        case MDL_ROMANTIC_CELLO:  s.glideMul = 1.5f - 1.25f * g; break;      // quick ... slow romantic slides
+        case MDL_TREMOLO_SECTION:
+        case MDL_SUSPENSE:        s.tremMul = oct2; break;                    // tremolo speed
+        case MDL_TRILL_SECTION:   s.trillMode = g < 0.333f ? 1 : (g < 0.667f ? 2 : 3); break;   // trill interval
+        case MDL_EPIC_OSTINATO:   s.strokeMul = 0.4f + 1.2f * g; break;      // short ... long strokes
+        case MDL_HEROIC:          s.accentMul = 0.3f + 1.4f * g; break;      // soft ... hard accents
+        case MDL_EMOTIONAL_SWELL:
+        case MDL_SHIMMER:         s.swellMul = oct2; break;                   // swell time
+        default: break;
+      }
+    }
+  }
   // the PRESSURE knob is the playing zone, contact point and force together
   // like a player uses them: left = over the fingerboard with a light bow
   // (soft, dark), centre = the articulation's normal contact point, right =
@@ -737,7 +776,7 @@ static inline void stringsControl(StringsEngine &s) {
   // the CLOCK RATE knob: bow speed on a log scale like real bow speeds,
   // ~9 cm/s (fully left) ... ~25 cm/s (centre) ... ~70 cm/s (fully right)
   s.bowBase = 0.04f * powf(8.0f, strClamp(s.speed, 0.0f, 1.0f));
-  s.swellK = M.swell > 0 ? 1.0f / (M.swell * STR_SR) : 1.0f;
+  s.swellK = M.swell > 0 ? 1.0f / (M.swell * s.swellMul * STR_SR) : 1.0f;
   // the force is relative to the playable (Helmholtz) window, which moves
   // with the contact point and the bow speed like on a real instrument
   // (Schelleng): over the fingerboard a light bow, near the bridge more force
@@ -807,8 +846,8 @@ static inline void stringsControl(StringsEngine &s) {
     // Tremolo bow strokes adapt to bow speed, pressure, dynamics and note spacing.
     // No beat subdivision or BPM locking: the hand's motion drives the rate.
     const float tremRate = (4.5f + 3.5f * adaptiveDrive) * adaptiveNoteRate * v.vibRateMul;
-    v.tremInc = tremRate / STR_SR;
-    v.vibDepth = STR_VIB_DEPTH[fam] * v.vibDepthMul * M.vibDepth;
+    v.tremInc = tremRate * s.tremMul / STR_SR;
+    v.vibDepth = STR_VIB_DEPTH[fam] * v.vibDepthMul * M.vibDepth * (0.4f + 0.6f * s.expr);
     // finger travel (was per sample): interval, phrase length and playing
     // energy shape the glide; the cello's finger has more weight
     {
@@ -823,7 +862,7 @@ static inline void stringsControl(StringsEngine &s) {
         const float timeFactor = strClamp(intervalFactor * phraseFactor * expressionFactor * weight, 0.55f, 2.8f);
         gk = strClamp(AA.glide / timeFactor, AA.glide * 0.30f, AA.glide * 1.8f);
       }
-      v.glideK = gk;
+      v.glideK = strClamp(gk * s.glideMul, 0.00005f, 0.05f);
     }
     // dynamic curve (HAESE P(D)): above normal playing the level grows ~30 %
     // as steeply (the tone still gets brighter and grippier), below normal it
@@ -847,8 +886,9 @@ static inline void stringsControl(StringsEngine &s) {
       const float t = (float)s.sinceGate / STR_SR;
       float ph = t / 12.0f; ph -= floorf(ph);
       const float spread = 0.5f - 0.5f * cosf(6.2831853f * ph);
-      swarmSemis = spread * M.swarm * v.swarmT;
+      swarmSemis = spread * s.swarmW * v.swarmT;
     }
+    if (s.clusterW > 0.0f) swarmSemis += (float)semis * (s.clusterW - 1.0f);  // suspense: cluster width
     float hz = s.rootHz * exp2f(((float)semis + swarmSemis) / 12.0f);
     while (hz < STR_FAMILY_LOW[fam]) hz *= 2.0f;            // keep it on the instrument
     while (hz > STR_FAMILY_HIGH[fam] * 1.02f) hz *= 0.5f;
@@ -994,9 +1034,12 @@ static inline void strBrainNote(StringsEngine &s) {
   // notes the full vibrato (it then still grows while the note lasts)
   const float len = strClamp(b.ioiAvg, 0.05f, 3.0f);
   vib *= len < 0.22f ? 0.35f : (len < 0.5f ? 0.35f + 0.65f * (len - 0.22f) / 0.28f : 1.0f);
-  b.energy = strClamp(e, 0.82f, 1.15f);
-  b.attackMul = strClamp(att, 0.8f, 1.4f);
-  b.vibIntent = strClamp(vib, 0.25f, 1.3f);
+  // expression depth (SPREAD on models without a layout to choose): 0 = a
+  // neutral player, 1 = natural default, 2 = twice the shaping
+  const float x = s.expr;
+  b.energy = strClamp(1.0f + (e - 1.0f) * x, 0.70f, 1.30f);
+  b.attackMul = strClamp(1.0f + (att - 1.0f) * x, 0.8f, 1.6f);
+  b.vibIntent = strClamp(1.0f + (vib - 1.0f) * x, 0.15f, 1.6f);
   b.phraseStart = newPhrase;
   // history
   if (ioi < 3.0f) b.ioiAvg += (ioi - b.ioiAvg) * 0.3f;
@@ -1046,11 +1089,11 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     if (s.trillPh >= 1.0f) s.trillPh -= 1.0f;
     trillUp = s.trillPh >= 0.5f;
   }
-  if (M.trill && trillUp != s.trillPrev) {                // trill: every finger hit / lift taps
+  if (s.trillMode && trillUp != s.trillPrev) {                // trill: every finger hit / lift taps
     for (int i = 0; i < STR_VOICES; i++) if (s.v[i].active && s.v[i].env > 0.2f) s.v[i].tran += (trillUp ? 0.018f : 0.009f) * (0.55f + 0.45f * strClamp(s.v[i].vel, 0.0f, 1.0f));
     s.trillPrev = trillUp;
   }
-  const float trillRatio = M.trill == 2 ? 0.8908987f : (M.trill == 1 ? 0.9438743f : 1.0f);
+  const float trillRatio = s.trillMode == 3 ? 0.8408964f : (s.trillMode == 2 ? 0.8908987f : (s.trillMode == 1 ? 0.9438743f : 1.0f));
   // ---- tempo: log every gate start (time + velocity); stringsTempo() finds
   //      the pulse, the ostinato pattern and the beat from it
   s.now++;
@@ -1092,7 +1135,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   const int ovrDiv = M.over > 0.0f ? (s.pressure > 0.75f ? 3 : (s.pressure > 0.4f ? 2 : 1)) : 1;
   const float ovrGain = ovrDiv == 3 ? 2.0f : (ovrDiv == 2 ? 1.6f : 1.0f);
   const StrArticDef &A = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : 0];
-  const uint32_t strokeMax = (uint32_t)(A.stroke * STR_SR);
+  const uint32_t strokeMax = (uint32_t)(A.stroke * s.strokeMul * STR_SR);
   float famBus[STR_FAMILIES]  = { 0, 0, 0, 0 };   // divisi players
   float leadBus = 0.0f;                              // player 1
   uint8_t leadFam = s.v[0].family;
@@ -1151,7 +1194,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           // slow ~-2 dB, fast ~+2 dB against a normal bow (measured)
           v.bowGain = v.bowMul < 1.0f ? 1.0f - 0.96f * (1.0f - v.bowMul) : 1.0f;
           v.slMul = powf(v.bowMul, -0.6f);                     // the same Schelleng scaling per note
-          v.accent = A.accent * M.accent * (0.4f + 0.6f * v.vel);
+          v.accent = A.accent * M.accent * s.accentMul * (0.4f + 0.6f * v.vel);
           v.swell = M.swell > 0 ? 0.15f : 1.0f;               // swell: start soft
           // noise transient: scratch / snap / click, a bit different every time
           const float transientDynamics = (0.28f + 0.42f * strClamp(v.vel, 0.0f, 1.0f))

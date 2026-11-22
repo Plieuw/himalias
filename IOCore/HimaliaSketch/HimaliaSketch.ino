@@ -17,6 +17,10 @@
 //                                   / twelfth down -- and Threnody swarm)
 //   - SPREAD knob + CV ............ layout: unison, octaves, fifths, major, minor,
 //                                   divisi major, divisi minor, cluster
+//                                   models with no layout to choose (solo, or a
+//                                   fixed layout): expression depth (left neutral,
+//                                   centre natural, right very expressive);
+//                                   Threnody: swarm width; suspense: cluster width
 //   - SAMPLE SELECT knob + CV ..... playing zone: contact point and force together
 //                                   (left = over the fingerboard, light, soft and
 //                                   dark; centre = normal; right = near the bridge,
@@ -33,6 +37,10 @@
 //                                   staccato, spiccato, sul tasto, sul ponticello,
 //                                   col legno, flageolet, pizzicato, portamento;
 //                                   CV: 1 V = one articulation step from the knob
+//                                   models with a fixed articulation: a gesture
+//                                   (romantic cello slide time, tremolo speed,
+//                                   trill interval, ostinato stroke length, heroic
+//                                   accent, swell time); CV 1 V = 10 %
 //   - TRIGGER in / button ......... gate: bow / pluck / strike; the time between
 //                                   gates is the tempo for vibrato and tremolo
 //   - A/B button (sample side) .... con sordino (mute)
@@ -51,7 +59,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.32.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.33.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -697,6 +705,13 @@ void loop() {
   if(art < 0) art = 0;
   if(art > ART_COUNT - 1) art = ART_COUNT - 1;
   strings.artic = (uint8_t)art;
+  // the same knob + CV as a continuous value (1 V = 10 %): models that fix
+  // their articulation use it for a gesture of their own
+  {
+    float ka = (float)art_poti * (1.0f / 4095.0f);
+    if(art_jack < 4000) ka += cvVolts(art_jack) * 0.1f;
+    strings.knobArt = ka < 0.0f ? 0.0f : (ka > 1.0f ? 1.0f : ka);
+  }
 
   // ---- bow pressure: SAMPLE SELECT knob + CV
   uint16_t cv_sample_select_adc = adc51.readAnalog(PB09,ADC_Channel3,false);
@@ -720,6 +735,12 @@ void loop() {
   uint16_t lay_adc = adc51.readAnalog(PB05,ADC_Channel7,true);
   static uint16_t lay_state = 0;
   strings.layout = (uint8_t)selectHyst(lay_adc, 250, 3700, LAY_COUNT - 1, lay_state);
+  {                                                    // continuous: expression depth / widths
+    static float ks = 0.5f;
+    const float k = (float)((int32_t)lay_adc - 250) * (1.0f / (3700.0f - 250.0f));
+    ks += ((k < 0.0f ? 0.0f : (k > 1.0f ? 1.0f : k)) - ks) * 0.1f;
+    strings.knobSpread = ks;
+  }
   if(ins != strings.instrument){
     __disable_irq();
     strings.instrument = ins;

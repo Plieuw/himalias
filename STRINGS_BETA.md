@@ -61,6 +61,13 @@ tone); slow and medium bow ~+6 dB from left to right.
 The output gain is set so normal notes (no dynamic gate) peak ~3.4 ... 4.9 V
 over all 18 models; louder dynamic-gate notes go into the limiter.
 
+## Knobs per model (v1.33)
+
+SPREAD and SQUARES MAIN TUNE get a model-specific job where the model does not
+use them (expression depth, swarm / cluster width, slide time, tremolo speed,
+trill interval, stroke length, accent, swell time). See
+`STRINGS_V1.33.0_BETA_NOTES.md`.
+
 ## Dynamic gates
 
 0 ... 10 V = soft ... full, linear (v1.16; before: full at 8 V and gates above
