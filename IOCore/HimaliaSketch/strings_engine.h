@@ -915,7 +915,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     trillUp = s.trillPh >= 0.5f;
   }
   if (M.trill && trillUp != s.trillPrev) {                // trill: every finger hit / lift taps
-    for (int i = 0; i < STR_VOICES; i++) if (s.v[i].active && s.v[i].env > 0.2f) s.v[i].tran += trillUp ? 0.07f : 0.03f;
+    for (int i = 0; i < STR_VOICES; i++) if (s.v[i].active && s.v[i].env > 0.2f) s.v[i].tran += (trillUp ? 0.018f : 0.009f) * (0.55f + 0.45f * strClamp(s.v[i].vel, 0.0f, 1.0f));
     s.trillPrev = trillUp;
   }
   const float trillRatio = M.trill == 2 ? 0.8908987f : (M.trill == 1 ? 0.9438743f : 1.0f);
@@ -977,15 +977,20 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         // a short bite and the string is damped; long notes: the bow lifts
         // off with a whisper, the string rings on, slower taper for longer notes
         v.relStop = A.mode == MODE_BOW && (s.noteDur < 0.35f || s.articEff == ART_MARTELE);
-        const float tau = v.relStop ? 0.015f : strClamp(0.04f + 0.06f * s.noteDur, 0.05f, 0.18f);
+        const float releaseEnergy = 0.75f + 0.25f * strClamp(v.vel, 0.0f, 1.0f);
+        const float tau = v.relStop ? (0.035f + 0.018f * (1.0f - releaseEnergy))
+                                    : strClamp(0.09f + 0.10f * s.noteDur, 0.10f, 0.24f);
         v.relK = 1.0f / (tau * STR_SR);
-        if (v.env > 0.1f && A.mode == MODE_BOW) v.tran += v.relStop ? 0.09f : 0.05f;
+        if (v.env > 0.1f && A.mode == MODE_BOW) {
+          const float releaseDyn = 0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.0f);
+          v.tran += (v.relStop ? 0.022f : 0.014f) * releaseDyn * (0.85f + 0.15f * strRand(s));
+        }
       }
       if (gate) {
         v.fingerOff = false;
         v.lenTarget = v.lenNext; v.ringLoss = v.ringNext; v.openLen = v.openNext;
         const bool continuing = A.legato && v.env > 0.05f;    // legato: same bow
-        if (continuing) v.tran += 0.15f;                      // finger / bow change noise
+        if (continuing) v.tran += 0.025f * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.0f));                      // finger / bow change noise
         if (!continuing) {
           v.strokeN = 0;
           v.vel = strClamp(s.velocity, 0.0f, 1.3f);             // dynamic gate: how hard this note
@@ -1000,12 +1005,14 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           v.accent = A.accent * M.accent * (0.4f + 0.6f * v.vel);
           v.swell = M.swell > 0 ? 0.15f : 1.0f;               // swell: start soft
           // noise transient: scratch / snap / click, a bit different every time
+          const float transientDynamics = (0.28f + 0.42f * strClamp(v.vel, 0.0f, 1.0f))
+                                        * (0.78f + 0.22f * s.pressure)
+                                        * (0.85f + 0.30f * (0.5f + 0.5f * strRand(s)));
           v.tran = STR_ARTIC_SCRATCH[s.articEff < ART_COUNT ? s.articEff : 0]
-                 * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) * (0.6f + 0.6f * s.pressure)
-                 * (0.3f + 0.7f * v.vel);
-          // Bowed-string onset: strongly soften the initial scratch/click.
-          // Keep pizzicato and col legno articulation levels unchanged.
-          if (A.mode == MODE_BOW) v.tran *= 0.12f;
+                 * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) * transientDynamics;
+          // The onset noise now follows note dynamics, with a lower ceiling;
+          // bow attacks are especially restrained while pluck character remains.
+          if (A.mode == MODE_BOW) v.tran *= 0.35f;
           if (A.alternate) v.dir = -v.dir;                    // up-bow / down-bow
           // A legato finger change keeps the current string length and slides to the new pitch.
           // Detached/retriggered notes start directly at their target pitch.
@@ -1049,8 +1056,15 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // spiccato lift the bow after a fixed stroke even if the gate stays high
     bool bowing = v.gate && A.mode == MODE_BOW;
     if (bowing && strokeMax && v.strokeN > strokeMax) bowing = false;
-    if (bowing) v.env += (1.0f - v.env) * (A.attack * 0.65f);
-    else        v.env -= v.env * (strokeMax ? 0.004f : v.relK);     // short strokes lift fast
+    if (bowing) {
+      // Softer, velocity-aware bow onset: quieter notes ease in more slowly.
+      const float attackShape = 0.28f + 0.22f * strClamp(v.vel, 0.0f, 1.0f)
+                              + 0.08f * strClamp(s.pressure, 0.0f, 1.0f);
+      v.env += (1.0f - v.env) * (A.attack * attackShape);
+    } else {
+      const float strokeRelease = strokeMax ? 0.0022f : v.relK;
+      v.env -= v.env * strokeRelease;
+    }     // short strokes lift fast
     if (!v.gate) {
       if (v.relN < 0xFFFFFFF0u) v.relN++;
       // after a lifted long note the finger comes off: the string still
@@ -1059,7 +1073,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           && v.openLen > v.len * 1.03f) {
         v.fingerOff = true;
         v.len = v.lenTarget = v.fingerLen = v.openLen;
-        v.tran += 0.03f;
+        v.tran += 0.008f * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.0f));
       }
     }
     v.accent *= A.accentDecay;
@@ -1139,7 +1153,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         const uint32_t T = (uint32_t)(0.09f * STR_SR), half = T / 2;
         const float x = (float)v.turn / (float)T;                       // 1 -> 0
         bv *= 0.3f + 0.7f * fabsf(cosf(3.14159265f * x));               // slow down, turn, speed up
-        if (v.turn == half) { v.dir = -v.dir; v.tran += 0.22f * (0.5f + 0.5f * v.vel); }
+        if (v.turn == half) { v.dir = -v.dir; v.tran += 0.055f * (0.45f + 0.55f * strClamp(v.vel, 0.0f, 1.0f)); }
         v.turn--;
       }
       if (trem) {
@@ -1149,7 +1163,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         tri *= 3.0f;
         tri = strClamp(tri, -1.0f, 1.0f);
         const float sg = tri >= 0 ? 1.0f : -1.0f;
-        if (sg != v.tremPrev) { v.tran += 0.35f; v.tremPrev = sg; }   // bow change scratch
+        if (sg != v.tremPrev) { v.tran += 0.085f * (0.5f + 0.5f * strClamp(v.vel, 0.0f, 1.0f)); v.tremPrev = sg; }   // bow change scratch
         bv *= tri;
       }
       // rosin noise on the bow
