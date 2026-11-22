@@ -136,14 +136,14 @@ static const StrModelDef STR_MODELS[MDL_COUNT] = {
   // 1-7: the instruments themselves, solo -> section -> tutti
   { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.578f, 0.0f, 0.0f },  // solo violin
   { INS_SOLO_VIOLA,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.792f, 0.0f, 0.0f },  // solo viola
-  { INS_SOLO_CELLO,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.798f, 0.0f, 0.0f },  // solo cello
+  { INS_SOLO_CELLO,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.077f, 0.0f, 0.0f },  // solo cello
   { INS_VIOLIN_SECTION, -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.807f, 0.0f, 0.0f },  // violin section
   { INS_VIOLA_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.705f, 0.0f, 0.0f },  // viola section
-  { INS_CELLO_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.780f, 0.0f, 0.0f },  // cello section
+  { INS_CELLO_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.053f, 0.0f, 0.0f },  // cello section
   { INS_FULL_STRINGS,   -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.838f, 0.0f, 0.0f },  // full strings
   // 8-11: playing styles on a soloist or a section
   { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.9f, 1.15f, 0.0f, 0,   1.0f,  1.0f, 1.0f, 0.581f, 0.0f, 0.0f },  // molto vibrato violin
-  { INS_SOLO_CELLO,     ART_LEGATO,    -1,           -1, 1.7f, 0.8f,  0.6f, 0,   1.0f,  1.0f, 1.0f, 0.985f, 0.0f, 0.0f },  // romantic cello
+  { INS_SOLO_CELLO,     ART_LEGATO,    -1,           -1, 1.7f, 0.8f,  0.6f, 0,   1.0f,  1.0f, 1.0f, 1.330f, 0.0f, 0.0f },  // romantic cello
   { INS_VIOLIN_SECTION, ART_DETACHE,   -1,            1, 0.5f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.158f, 0.0f, 0.0f },  // tremolo section
   { INS_VIOLIN_SECTION, ART_LEGATO,    -1,           -1, 0.3f, 1.0f,  0.0f, 2,   1.0f,  0.5f, 1.0f, 0.801f, 0.0f, 0.0f },  // trill section (whole tone)
   // 12-16: film-score gestures, from calm to driving
@@ -153,7 +153,7 @@ static const StrModelDef STR_MODELS[MDL_COUNT] = {
   { INS_LOW_STRINGS,    ART_SPICCATO,  LAY_OCTAVES,   0, 0.0f, 1.0f,  0.0f, 0,   3.5f,  0.2f, 0.25f, 1.773f, 0.0f, 0.0f },  // epic ostinato
   { INS_VIOLIN_SECTION, ART_PONTICELLO,LAY_CLUSTER,   1, 0.2f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.162f, 0.0f, 0.0f },  // suspense
   // 17-18: experimental
-  { INS_SOLO_CELLO,     -1,            -1,           -1, 0.3f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.854f, 1.0f, 0.0f },  // overpressure (ALF)
+  { INS_SOLO_CELLO,     -1,            -1,           -1, 0.3f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 1.153f, 1.0f, 0.0f },  // overpressure (ALF)
   { INS_VIOLIN_SECTION, -1,            LAY_UNISON,   -1, 0.25f,1.0f,  1.0f, 0,   1.0f,  1.2f, 1.0f, 1.079f, 0.0f, 2.0f },  // Threnody swarm
 };
 
