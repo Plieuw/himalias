@@ -63,11 +63,17 @@ enum StrInstrument : uint8_t { INS_SOLO_VIOLIN = 0, INS_SOLO_CELLO, INS_VIOLIN_S
 enum StrLayout     : uint8_t { LAY_UNISON = 0, LAY_OCTAVES, LAY_FIFTHS, LAY_MAJOR, LAY_MINOR,
                                LAY_DIVISI_MAJOR, LAY_DIVISI_MINOR, LAY_CLUSTER, LAY_COUNT };
 // models on the RATCHET knob: a base ensemble plus playing style
-enum StrModel : uint8_t { MDL_SOLO_VIOLIN = 0, MDL_SOLO_VIOLA, MDL_SOLO_CELLO, MDL_VIOLIN_SECTION,
-                          MDL_VIOLA_SECTION, MDL_CELLO_SECTION,
-                          MDL_FULL_STRINGS, MDL_MOLTO_VIBRATO, MDL_ROMANTIC_CELLO, MDL_TREMOLO_SECTION,
-                          MDL_TRILL_SECTION, MDL_EPIC_OSTINATO, MDL_SUSPENSE, MDL_HEROIC,
-                          MDL_EMOTIONAL_SWELL, MDL_SHIMMER, MDL_OVERPRESSURE, MDL_THRENODY, MDL_COUNT };
+enum StrModel : uint8_t {
+  // 1-7: the instruments themselves, solo -> section -> tutti
+  MDL_SOLO_VIOLIN = 0, MDL_SOLO_VIOLA, MDL_SOLO_CELLO,
+  MDL_VIOLIN_SECTION, MDL_VIOLA_SECTION, MDL_CELLO_SECTION, MDL_FULL_STRINGS,
+  // 8-11: playing styles on a soloist or a section
+  MDL_MOLTO_VIBRATO, MDL_ROMANTIC_CELLO, MDL_TREMOLO_SECTION, MDL_TRILL_SECTION,
+  // 12-16: film-score gestures, from calm to driving
+  MDL_SHIMMER, MDL_EMOTIONAL_SWELL, MDL_HEROIC, MDL_EPIC_OSTINATO, MDL_SUSPENSE,
+  // 17-18: experimental
+  MDL_OVERPRESSURE, MDL_THRENODY, MDL_COUNT
+};
 #define INS_COUNT MDL_COUNT        // the RATCHET knob selects one of the models
 
 // Articulations (SQUARES MAIN TUNE knob + CV)
@@ -127,6 +133,7 @@ struct StrModelDef {
 };
 static const StrModelDef STR_MODELS[MDL_COUNT] = {
   //  base                art            layout        trem vibD  vibR  swell trill accent tight ring gain
+  // 1-7: the instruments themselves, solo -> section -> tutti
   { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.578f, 0.0f, 0.0f },  // solo violin
   { INS_SOLO_VIOLA,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.792f, 0.0f, 0.0f },  // solo viola
   { INS_SOLO_CELLO,     -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.798f, 0.0f, 0.0f },  // solo cello
@@ -134,16 +141,18 @@ static const StrModelDef STR_MODELS[MDL_COUNT] = {
   { INS_VIOLA_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.705f, 0.0f, 0.0f },  // viola section
   { INS_CELLO_SECTION,  -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.780f, 0.0f, 0.0f },  // cello section
   { INS_FULL_STRINGS,   -1,            -1,           -1, 1.0f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.838f, 0.0f, 0.0f },  // full strings
+  // 8-11: playing styles on a soloist or a section
   { INS_SOLO_VIOLIN,    -1,            -1,           -1, 1.9f, 1.15f, 0.0f, 0,   1.0f,  1.0f, 1.0f, 0.581f, 0.0f, 0.0f },  // molto vibrato violin
   { INS_SOLO_CELLO,     ART_LEGATO,    -1,           -1, 1.7f, 0.8f,  0.6f, 0,   1.0f,  1.0f, 1.0f, 0.985f, 0.0f, 0.0f },  // romantic cello
   { INS_VIOLIN_SECTION, ART_DETACHE,   -1,            1, 0.5f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.158f, 0.0f, 0.0f },  // tremolo section
   { INS_VIOLIN_SECTION, ART_LEGATO,    -1,           -1, 0.3f, 1.0f,  0.0f, 2,   1.0f,  0.5f, 1.0f, 0.801f, 0.0f, 0.0f },  // trill section (whole tone)
+  // 12-16: film-score gestures, from calm to driving
+  { INS_VIOLIN_SECTION, ART_TASTO,     LAY_OCTAVES,  -1, 0.7f, 0.75f, 2.2f, 0,   1.0f,  1.0f, 1.0f, 1.862f, 0.0f, 0.0f },  // shimmer
+  { INS_FULL_STRINGS,   ART_LEGATO,    -1,           -1, 1.4f, 0.95f, 1.6f, 0,   1.0f,  1.0f, 1.0f, 0.888f, 0.0f, 0.0f },  // emotional swell
+  { INS_FULL_STRINGS,   ART_MARTELE,   LAY_OCTAVES,  -1, 1.6f, 1.1f,  0.0f, 0,   1.4f,  0.6f, 1.0f, 0.856f, 0.0f, 0.0f },  // heroic theme
   { INS_LOW_STRINGS,    ART_SPICCATO,  LAY_OCTAVES,   0, 0.0f, 1.0f,  0.0f, 0,   3.5f,  0.2f, 0.25f, 1.773f, 0.0f, 0.0f },  // epic ostinato
   { INS_VIOLIN_SECTION, ART_PONTICELLO,LAY_CLUSTER,   1, 0.2f, 1.0f,  0.0f, 0,   1.0f,  0.5f, 1.0f, 1.162f, 0.0f, 0.0f },  // suspense
-  { INS_FULL_STRINGS,   ART_MARTELE,   LAY_OCTAVES,  -1, 1.6f, 1.1f,  0.0f, 0,   1.4f,  0.6f, 1.0f, 0.856f, 0.0f, 0.0f },  // heroic theme
-  { INS_FULL_STRINGS,   ART_LEGATO,    -1,           -1, 1.4f, 0.95f, 1.6f, 0,   1.0f,  1.0f, 1.0f, 0.888f, 0.0f, 0.0f },  // emotional swell
-  { INS_VIOLIN_SECTION, ART_TASTO,     LAY_OCTAVES,  -1, 0.7f, 0.75f, 2.2f, 0,   1.0f,  1.0f, 1.0f, 1.862f, 0.0f, 0.0f },  // shimmer
-  // experimental
+  // 17-18: experimental
   { INS_SOLO_CELLO,     -1,            -1,           -1, 0.3f, 1.0f,  0.0f, 0,   1.0f,  1.0f, 1.0f, 0.854f, 1.0f, 0.0f },  // overpressure (ALF)
   { INS_VIOLIN_SECTION, -1,            LAY_UNISON,   -1, 0.25f,1.0f,  1.0f, 0,   1.0f,  1.2f, 1.0f, 1.079f, 0.0f, 2.0f },  // Threnody swarm
 };
@@ -800,11 +809,14 @@ static inline void stringsControl(StringsEngine &s) {
       v.lenTarget = v.lenNext; v.ringLoss = v.ringNext; v.openLen = v.openNext;
     }
 
-    // family balance in the full section; high notes lose level in the
-    // short string loop, give them some back
+    // family balance in the full section, at the same pitch
     v.gain = (fam == FAM_BASS) ? 0.85f : (fam == FAM_VIOLA ? 0.95f : (fam == FAM_CELLO ? 0.8f : 1.0f));
-    const float hi = hz * (1.0f / (2.5f * STR_FAMILY_LOW[fam]));
-    if (hi > 1.0f) v.gain *= strClamp(hi, 1.0f, 2.0f);
+    // No register compensation: v1.20 and earlier lifted everything above 2.5x
+    // the lowest open string by up to 6 dB, which made the top of the violin
+    // +6 dB, the viola +7 and the cello +9 dB against their own lowest note --
+    // measured with tests/strings_level_report.cpp. A real instrument does not
+    // get louder as it plays higher, so the lift is gone and the small loss the
+    // short loop really has (-1.7 dB on the violin's top note) stands.
   }
   // keep the sum at a similar level for 1 ... 6 players
   s.level = 1.0f / sqrtf((float)(nActive > 0 ? nActive : 1));

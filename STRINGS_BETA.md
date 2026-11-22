@@ -2,7 +2,8 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `firmware/Himalia_strings_v1.20.0-beta.uf2`
+Firmware: `Himalia_strings_v1.25.0-beta.uf2` (built by CI, attached to the
+v1.25.0-beta release)
 
 ## Concept
 
@@ -82,13 +83,18 @@ The hardware output stage (Vout = DAC V x 3.397 - 6.05) can give about
 -6 ... +5.1 V; centred on 0 V that is +-5.1 V (10 Vpp, the Eurorack audio
 standard). +-8 V is not possible with this output stage.
 
-v1.17: make-up gain (x1.5) into a **look-ahead limiter** (1.3 ms look-ahead,
-~80 ms release, ceiling +-4.85 V) on both outputs, and no clipper anywhere
-(the soft clip is gone; the waveform is not touched, only the gain moves).
-Without a dynamic gate most models peak at ~4.4 ... 4.9 V; with a dynamic
-gate soft notes stay ~7 dB below normal ones, only the loudest are flattened.
-More make-up gain would only flatten the dynamics (a sustained bowed tone has
-a fixed peak-to-average ratio), so this is about as loud as it gets cleanly.
+v1.20.x: the make-up gain and the look-ahead limiter of v1.17 are gone again.
+Every model is calibrated on its own peak (`tests/strings_level_report.cpp`) and
+bow dynamics and transients pass through untouched. Measured at the default
+settings the highest peak of the 18 models is 0.87 of full scale (heroic
+theme), so nothing clips.
+
+v1.25: the register compensation is gone too. Up to v1.20 every note above 2.5x
+the instrument's lowest open string was lifted by up to 6 dB, which made the top
+of the range +6 dB (violin), +7 dB (viola) and +9 dB (cello) louder than that
+same instrument's lowest note. No acoustic string does that. Measured after the
+change, over three octaves the level stays within 1.7 dB on the violin, 1.3 dB
+on the viola and 3.3 dB on the cello (its remaining rise is the body).
 
 ## Articulations (SQUARES MAIN TUNE, left to right)
 
@@ -192,6 +198,11 @@ pattern (notes / pulses).
 
 ## Models (RATCHET knob, left to right)
 
+The knob runs in four groups, so neighbouring detents are always related:
+the instruments (1 ... 7), the playing styles (8 ... 11), the film-score
+gestures from calm to driving (12 ... 16) and the experimental ones
+(17 ... 18).
+
 | # | model | what it is |
 |---|---|---|
 | 1 | solo violin | one violin |
@@ -205,11 +216,11 @@ pattern (notes / pulses).
 | 9 | romantic cello | solo cello, slow wide vibrato, every note swells a little (legato) |
 | 10 | tremolo section | violins, always tremolo on the tempo, tight ensemble |
 | 11 | trill section | violins trilling a whole tone, ~9 notes/s or on the tempo |
-| 12 | epic ostinato | violas, cellos and basses in octaves, short punchy spiccato, very tight (trailer-style ostinatos) |
-| 13 | suspense | violins sul ponticello tremolo in a semitone cluster (thriller / horror) |
+| 12 | shimmer | violins sul tasto in octaves, slow vibrato, slow swell (airy high pads) |
+| 13 | emotional swell | full strings, every note swells in over ~1.6 s, rich vibrato |
 | 14 | heroic theme | full strings in octaves, marcato, big vibrato (epic themes) |
-| 15 | emotional swell | full strings, every note swells in over ~1.6 s, rich vibrato |
-| 16 | shimmer | violins sul tasto in octaves, slow vibrato, slow swell (airy high pads) |
+| 15 | epic ostinato | violas, cellos and basses in octaves, short punchy spiccato, very tight (trailer-style ostinatos) |
+| 16 | suspense | violins sul ponticello tremolo in a semitone cluster (thriller / horror) |
 | 17 | overpressure (experimental) | solo cello with a heavy, creaking bow. **PRESSURE knob**: below 0.4 crunch only, 0.4 ... 0.75 an octave below, above 0.75 an octave + fifth below (subharmonics like the extended technique "ALF") |
 | 18 | Threnody swarm (experimental) | violin section that glides apart from the note into a quarter-tone cluster (up to +-2 semitones) and back together, ~12 s per cycle from every gate; tremolo with the BIT switch |
 

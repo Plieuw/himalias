@@ -5,13 +5,16 @@
 //   - SAMPLE TUNE knob + CV ....... pitch: the knob spans the instrument's real
 //                                   range (left = lowest open string: violin G3,
 //                                   viola C3, cello C2, bass E1), CV 1 V/oct on top
-//   - RATCHET knob ................ model (18): solo violin, solo viola, solo
-//                                   cello, violin / viola / cello section, full
-//                                   strings, molto vibrato violin, romantic cello,
-//                                   tremolo section, trill section, epic ostinato,
-//                                   suspense, heroic theme, emotional swell, shimmer,
-//                                   overpressure (PRESSURE: crunch / octave down /
-//                                   twelfth down), Threnody swarm
+//   - RATCHET knob ................ model (18), grouped: the instruments first
+//                                   (solo violin, solo viola, solo cello, violin /
+//                                   viola / cello section, full strings), then the
+//                                   playing styles (molto vibrato violin, romantic
+//                                   cello, tremolo section, trill section), then the
+//                                   film-score gestures from calm to driving
+//                                   (shimmer, emotional swell, heroic theme, epic
+//                                   ostinato, suspense), then experimental
+//                                   (overpressure -- PRESSURE: crunch / octave down
+//                                   / twelfth down -- and Threnody swarm)
 //   - SPREAD knob + CV ............ layout: unison, octaves, fifths, major, minor,
 //                                   divisi major, divisi minor, cluster
 //   - SAMPLE SELECT knob + CV ..... playing zone: contact point and force together
@@ -48,7 +51,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.20.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.25.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
