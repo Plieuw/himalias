@@ -45,14 +45,14 @@
 #ifndef STR_SL_MIN
 #define STR_SL_MIN 0.6f
 #endif
-#define STR_AIR_DEFAULT 0.5f    // air band level (0 = none)
+#define STR_AIR_DEFAULT 0.28f   // listener perspective: restrained upper-air layer
 #ifndef STR_OUT_GAIN
 #define STR_OUT_GAIN 0.60f      // calibrated for a 4.95 V peak target at the +/-5 V DAC scale
 #endif
 #define STR_SYM_STRINGS 5       // sympathetic resonance: up to 5 open strings (5-string bass)
 #define STR_SYM_LEN 1600        // delay per open string (bass B0 ~ 1540 samples)
 #ifndef STR_SYM_LEVEL
-#define STR_SYM_LEVEL 0.5f
+#define STR_SYM_LEVEL 0.30f
 #endif
 
 enum StrFamily     : uint8_t { FAM_VIOLIN = 0, FAM_VIOLA, FAM_CELLO, FAM_BASS };
@@ -361,10 +361,10 @@ static inline void strMode(StrMode &m, float hz, float q, float gain) {
 // frequency (Hz), Q, gain
 static const float STR_BODY[STR_FAMILIES][STR_BODY_MODES][3] = {
   //  A0 (air)          B1- (wood)          B1+ (wood)          mid               bridge hill        upper
-  { { 275, 15, 0.9f }, { 470, 25, 1.3f }, { 550, 25, 1.2f }, { 1000, 6, 0.5f }, { 2500, 2.5f, 1.0f }, { 3300, 5, 0.4f } },  // violin
-  { { 230, 14, 0.9f }, { 350, 22, 1.3f }, { 430, 22, 1.2f }, {  850, 6, 0.5f }, { 2000, 2.5f, 0.9f }, { 2700, 5, 0.35f } }, // viola
-  { { 100, 12, 1.0f }, { 145, 20, 1.3f }, { 205, 20, 1.2f }, {  400, 6, 0.5f }, { 1300, 2.5f, 0.7f }, { 2000, 5, 0.3f } },  // cello
-  { {  58, 10, 1.1f }, {  95, 16, 1.2f }, { 125, 16, 1.0f }, {  250, 6, 0.5f }, {  800, 2.5f, 0.5f }, { 1300, 5, 0.2f } },  // bass
+  { { 275, 12, 0.78f }, { 470, 18, 1.02f }, { 550, 18, 0.96f }, { 1000, 6, 0.48f }, { 2500, 2.5f, 0.78f }, { 3300, 5, 0.32f } },  // violin
+  { { 230, 11, 0.78f }, { 350, 17, 1.02f }, { 430, 17, 0.96f }, {  850, 6, 0.48f }, { 2000, 2.5f, 0.74f }, { 2700, 5, 0.30f } }, // viola
+  { { 100, 8, 0.72f }, { 145, 14, 0.94f }, { 205, 14, 0.90f }, {  400, 6, 0.46f }, { 1300, 2.5f, 0.58f }, { 2000, 5, 0.25f } },  // cello
+  { {  58, 7, 0.58f }, {  95, 11, 0.78f }, { 125, 11, 0.70f }, {  250, 5, 0.42f }, {  800, 2.5f, 0.42f }, { 1300, 5, 0.18f } },  // bass
 };
 static const float STR_BODY_DIRECT[STR_FAMILIES] = { 0.35f, 0.4f, 0.45f, 0.5f };
 // open strings per family (Hz): violin G D A E, viola C G D A, cello C G D A,
@@ -1214,8 +1214,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     v.tBp1 += (v.tranHp - v.tBp1) * 0.18f;                  // minus lowpass ~1.5 kHz
     const float trHp = v.tranHp - v.tBp1;
     // louder notes sound brighter: tilt the radiated sound with the velocity
-    const float tilt = 0.8f * (v.vel - 0.7f) + 0.3f * (v.bowMul - 1.0f);   // fast bow a bit brighter
-    const float radiated = bridgeOut + (bridgeOut - v.prevB) * tilt + trHp * 0.06f;
+    const float tilt = 0.65f * (v.vel - 0.7f) + 0.25f * (v.bowMul - 1.0f);   // fast bow a bit brighter
+    const float radiated = bridgeOut + (bridgeOut - v.prevB) * tilt + trHp * 0.035f;
     v.prevB = bridgeOut;
     // dynamics: the string alone follows the bow speed unevenly from note to
     // note; a player also uses force and contact point, so the note level
