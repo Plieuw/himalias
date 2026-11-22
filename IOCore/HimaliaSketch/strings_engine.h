@@ -47,7 +47,7 @@
 #endif
 #define STR_AIR_DEFAULT 0.28f   // listener perspective: restrained upper-air layer
 #ifndef STR_OUT_GAIN
-#define STR_OUT_GAIN 0.60f      // calibrated for a 4.95 V peak target at the +/-5 V DAC scale
+#define STR_OUT_GAIN 0.72f      // calibrated for a 4.95 V peak target at the +/-5 V DAC scale
 #endif
 #define STR_SYM_STRINGS 5       // sympathetic resonance: up to 5 open strings (5-string bass)
 #define STR_SYM_LEN 1600        // delay per open string (bass B0 ~ 1540 samples)
@@ -345,6 +345,11 @@ struct StringsEngine {
 static inline float strRand(StringsEngine &s) {            // -1 ... 1
   s.rng ^= s.rng << 13; s.rng ^= s.rng >> 17; s.rng ^= s.rng << 5;
   return (float)(int32_t)s.rng * (1.0f / 2147483648.0f);
+}
+static inline float strNoise(uint32_t &state) {
+  // Xorshift32: avoids the short-pattern spectral artefacts of the old LCG.
+  state ^= state << 13; state ^= state >> 17; state ^= state << 5;
+  return (float)(int32_t)state * (1.0f / 2147483648.0f);
 }
 static inline float strClamp(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
 
@@ -1146,8 +1151,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         bv *= tri;
       }
       // rosin noise on the bow
-      v.nrng = v.nrng * 1664525u + 1013904223u;
-      const float nz = (float)(int32_t)v.nrng * (1.0f / 2147483648.0f);
+      const float nz = strNoise(v.nrng);
       // friction: stick while the velocity difference is small, slip above.
       // The accent bites in with extra pressure (martele).
       bv *= 1.0f + 0.04f * vibRel * v.vc;                  // the bow arm moves with the hand
@@ -1197,8 +1201,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // noise transient: ~12 ms, part goes into the string, part is heard directly
     float tr = 0.0f;
     if (v.tran > 0.002f) {
-      v.nrng = v.nrng * 1664525u + 1013904223u;
-      const float nz = (float)(int32_t)v.nrng * (1.0f / 2147483648.0f);
+      const float nz = strNoise(v.nrng);
       tr = nz * v.tran * s.transient;
       v.tran *= (A.mode == MODE_STRIKE) ? 0.990f : 0.9982f;  // wood click shorter
       newVel += tr * 0.06f;
