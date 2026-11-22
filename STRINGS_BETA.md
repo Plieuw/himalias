@@ -2,8 +2,8 @@
 
 Branch: `himalia-strings-beta`. `main` stays the resonator / wavetable line.
 
-Firmware: `Himalia_strings_v1.25.0-beta.uf2` (built by CI, attached to the
-v1.25.0-beta release)
+Firmware: `Himalia_strings_v1.34.0-beta.uf2` (built by CI, attached to the
+v1.34.0-beta release) -- see STRINGS_V1.34.0_BETA_NOTES.md (controls in playing order)
 
 ## Concept
 
@@ -22,7 +22,7 @@ the former squares sequencer now drive the **generative divisi**.
 | SAMPLE SELECT knob + CV | bow pressure |
 | CLOCK RATE knob | bow speed |
 | CV IN RATE jack | **dynamic gate** / bow CV, 0 ... 10 V = soft ... full (linear): the level is how hard the bow plays. Above ~0.4 V it is also a gate (plays notes, steps the divisi, gives the tempo). A slow CV here makes swells |
-| SQUARES MAIN TUNE knob + CV | articulation (11 steps, see below); the CV can sequence articulations |
+| SQUARES MAIN TUNE knob + CV | articulation (12 steps, see below); the CV can sequence articulations |
 | TRIGGER in / button | gate: bow / pluck / strike; steps the divisi register; the rhythm of the gates gives the tempo (also irregular ostinati) |
 | A/B button (sample side) | A = open, B = con sordino (mute: darker, softer, shorter ring) |
 | A/B button (squares side) | A = vibrato, B = senza vibrato |
@@ -103,21 +103,24 @@ same instrument's lowest note. No acoustic string does that. Measured after the
 change, over three octaves the level stays within 1.7 dB on the violin, 1.3 dB
 on the viola and 3.3 dB on the cello (its remaining rise is the body).
 
-## Articulations (SQUARES MAIN TUNE, left to right)
+## Articulations (SQUARES MAIN TUNE, left to right; playing order since v1.34)
 
 | # | articulation | what it does |
 |---|---|---|
-| 1 | legato | soft attack; a new gate while the bow is still moving continues the stroke, pitch glides ~30 ms |
-| 2 | détaché | every note a new stroke, bow direction alternates, small accent |
-| 3 | martelé / marcato | strong accent with extra pressure that bites in, then releases |
-| 4 | staccato | short stroke (bow stops after ~120 ms even if the gate stays high) |
-| 5 | spiccato | very short, light, bouncing stroke that rings on |
-| 6 | sul tasto | bow over the fingerboard, light pressure: soft, flute-like |
-| 7 | sul ponticello | bow at the bridge: glassy, bright |
-| 8 | col legno battuto | the wood of the bow strikes the string: percussive tick with pitch |
+| 1 | AUTO | the gate length decides: long / tied = legato, normal = détaché, short = staccato, very short = spiccato |
+| 2 | portamento | expressive slide (~0.2 s) on every pitch change |
+| 3 | legato | soft attack; a new gate while the bow is still moving continues the stroke, pitch glides ~30 ms |
+| 4 | détaché | every note a new stroke, bow direction alternates, small accent (follows the gate length) |
+| 5 | martelé / marcato | strong accent with extra pressure that bites in; short gates -> staccato |
+| 6 | staccato | short stroke (bow stops after ~120 ms); long gates -> détaché, very short -> spiccato |
+| 7 | spiccato | very short, light, bouncing stroke that rings on; long gates -> staccato |
+| 8 | pizzicato | plucked |
 | 9 | flageolet | natural harmonic: an octave higher, light, pure |
-| 10 | pizzicato | plucked |
-| 11 | portamento | expressive slide (~0.2 s) on every pitch change |
+| 10 | sul tasto | bow over the fingerboard, light pressure: soft, flute-like |
+| 11 | sul ponticello | bow at the bridge: glassy, bright |
+| 12 | col legno battuto | the wood of the bow strikes the string: percussive tick with pitch |
+
+A patched ARTIC CV picks exactly that articulation (no gate-length shift).
 
 Noise transients (v1.5): every stroke starts with a short bow scratch
 (~12 ms, more for martele / spiccato / ponticello, little for legato and

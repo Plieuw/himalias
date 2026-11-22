@@ -340,8 +340,88 @@ int main() {
     if (!(s.swarmW > 3.0f)) { std::printf("FAIL swarm width knob\n"); ++fails; }
   }
 
+  // v1.34: gate length -> articulation (AUTO), the knob as the base, a
+  // patched ARTIC CV wins; look-ahead, heavy beats, leader, long arc
+  {
+    struct Case { float ioi, duty; uint8_t base; bool locked; uint8_t want; const char *name; };
+    const Case cs[] = {
+      { 0.50f, 0.98f, ART_AUTO,     false, ART_LEGATO,   "AUTO long gate -> legato" },
+      { 0.50f, 0.70f, ART_AUTO,     false, ART_DETACHE,  "AUTO normal gate -> detache" },
+      { 0.50f, 0.36f, ART_AUTO,     false, ART_STACCATO, "AUTO short gate -> staccato" },
+      { 0.25f, 0.30f, ART_AUTO,     false, ART_SPICCATO, "AUTO very short gate -> spiccato" },
+      { 0.50f, 0.98f, ART_MARTELE,  false, ART_MARTELE,  "martele long stays martele" },
+      { 0.50f, 0.36f, ART_MARTELE,  false, ART_STACCATO, "martele short -> staccato" },
+      { 0.50f, 0.36f, ART_DETACHE,  true,  ART_DETACHE,  "ARTIC CV patched: no gate articulation" },
+      { 0.50f, 0.36f, ART_TASTO,    false, ART_TASTO,    "tone colour stays" },
+    };
+    for (const Case &c : cs) {
+      stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.artic = c.base; s.articLocked = c.locked; s.rootHz = 440.0f;
+      stringsControl(s);
+      const int P = (int)(c.ioi * STR_SR), G = (int)(c.duty * c.ioi * STR_SR);
+      for (int n = 0; n < 8 * P; ++n) { if ((n & 127) == 0) stringsControl(s); stringsTick(s, (n % P) < G); }
+      if (s.articEff != c.want) { std::printf("FAIL %s (got %d)\n", c.name, (int)s.articEff); ++fails; }
+    }
+    // look-ahead: long-short-short pattern -> the note length comes from the pattern
+    stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.artic = ART_AUTO; s.rootHz = 440.0f; stringsControl(s);
+    const int pat[3] = { 24000, 12000, 12000 };
+    int t = 0, idx = 0, okAhead = 0, checked = 0, downs = 0, notes = 0; uint8_t ph0 = 255, ph4 = 255;
+    float e1 = 0, e4 = 0;
+    for (int bar = 0; bar < 12; ++bar)
+      for (int j = 0; j < 3; ++j) {
+        const int L = pat[j];
+        for (int n = 0; n < L; ++n) {
+          if ((t & 127) == 0) stringsControl(s);
+          stringsTick(s, n < L * 6 / 10); ++t;
+          if (n == 1) {
+            ++notes; if (s.brain.downBow) ++downs;
+            if (bar >= 6) { ++checked; if (std::fabs(s.noteAhead - (float)L / STR_SR) < 0.03f) ++okAhead; }
+                      }
+        }
+        ++idx;
+      }
+    if (okAhead < checked - 1) { std::printf("FAIL look-ahead %d/%d\n", okAhead, checked); ++fails; }
+    if (downs < 6 || downs > notes / 2) { std::printf("FAIL heavy beats on a down-bow (%d of %d)\n", downs, notes); ++fails; }
+    (void)ph0; (void)ph4; (void)e1; (void)e4; (void)idx;
+    // the long arc: the same 2-note phrase, separated by rests, gets different energy
+    stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.rootHz = 440.0f; stringsControl(s);
+    float en[8] = {0};
+    for (int ph = 0; ph < 8; ++ph)
+      for (int n = 0; n < 60000; ++n) {
+        if ((n & 127) == 0) stringsControl(s);
+        stringsTick(s, n < 20000 || (n >= 24000 && n < 40000));
+        if (n == 1) en[ph] = s.brain.energy;
+      }
+    if (!(en[5] > en[0] + 0.05f) || !(en[1] != en[4])) { std::printf("FAIL long arc %.3f %.3f %.3f\n", en[0], en[4], en[5]); ++fails; }
+    // the section follows its leader: player 1 starts at once, the others later
+    stringsInit(s); s.instrument = MDL_VIOLIN_SECTION; s.rootHz = 440.0f; stringsControl(s);
+    stringsTick(s, true);
+    bool lead = s.v[0].gate, others = false;
+    for (int i = 1; i < STR_VOICES; ++i) if (s.v[i].active && s.v[i].onset) others = true;
+    if (!lead || !others) { std::printf("FAIL concertmaster leads\n"); ++fails; }
+  }
+
+  // v1.34 aftertouch: pressing CV IN RATE in during the note adds bow weight
+  {
+    double r[2], br[2];
+    for (int k = 0; k < 2; ++k) {
+      stringsInit(s); s.instrument = MDL_SOLO_CELLO; s.artic = ART_LEGATO; s.rootHz = 130.8f;
+      s.velocity = 0.5f; s.speedCV = 0.5f; stringsControl(s);
+      std::vector<float> o;
+      for (int n = 0; n < 60000; ++n) {
+        if (n == 15000 && k) s.velocity = 1.0f;          // pressed in (the bow speed stays)
+        if ((n & 127) == 0) stringsControl(s);
+        o.push_back(stringsTick(s, true));
+      }
+      r[k] = rms(o, 40000, 60000);
+      std::vector<float> d; for (unsigned n = 40001; n < 60000; ++n) d.push_back(o[n] - o[n - 1]);
+      br[k] = rms(d, 0, (unsigned)d.size()) / r[k];          // brightness
+      if (k && !(s.v[0].at > 0.3f)) { std::printf("FAIL aftertouch not seen (%.2f)\n", s.v[0].at); ++fails; }
+    }
+    if (!(br[1] > br[0] * 1.01) || !(r[1] > r[0] * 1.08)) { std::printf("FAIL aftertouch: no brighter (%.3f, level %.3f)\n", br[1] / br[0], r[1] / r[0]); ++fails; }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, model knob jobs)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, model knob jobs, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

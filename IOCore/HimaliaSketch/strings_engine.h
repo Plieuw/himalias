@@ -83,10 +83,14 @@ enum StrModel : uint8_t {
 };
 #define INS_COUNT MDL_COUNT        // the RATCHET knob selects one of the models
 
-// Articulations (SQUARES MAIN TUNE knob + CV)
-enum StrArtic : uint8_t { ART_LEGATO = 0, ART_DETACHE, ART_MARTELE, ART_STACCATO, ART_SPICCATO,
-                          ART_TASTO, ART_PONTICELLO, ART_COL_LEGNO, ART_FLAGEOLET, ART_PIZZICATO,
-                          ART_PORTAMENTO, ART_COUNT };
+// Articulations (SQUARES MAIN TUNE knob + CV), in playing order (v1.34):
+// AUTO first (the gate length decides), then connected -> short -> plucked,
+// then the tone colours from soft to harsh
+enum StrArtic : uint8_t { ART_PORTAMENTO = 0, ART_LEGATO, ART_DETACHE, ART_MARTELE, ART_STACCATO,
+                          ART_SPICCATO, ART_PIZZICATO, ART_FLAGEOLET, ART_TASTO, ART_PONTICELLO,
+                          ART_COL_LEGNO, ART_COUNT };
+#define ART_AUTO    ART_COUNT       // knob position 1: articulation from the gate length
+#define ART_KNOB_STEPS (ART_COUNT + 1)
 enum StrExcite : uint8_t { MODE_BOW = 0, MODE_PLUCK, MODE_STRIKE };
 
 struct StrArticDef {
@@ -108,17 +112,17 @@ struct StrArticDef {
 
 static const StrArticDef STR_ARTIC[ART_COUNT] = {
   //  mode        beta  press speed attack   accent decay     bite stroke glide    ring(s) st alt  leg
+  { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0010f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00012f, 0.60f, 0, false, true  },  // portamento
   { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0015f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00045f,0.60f, 0, false, true  },  // legato: ~47 ms finger travel
   { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0030f, 0.35f,0.9993f,  0.3f, 0.0f,  0.0030f, 0.60f, 0, true,  false },  // detache
   { MODE_BOW,    0.10f, 1.1f, 1.0f, 0.0060f, 1.0f, 0.99965f, 1.0f, 0.0f,  0.0030f, 0.70f, 0, true,  false },  // martele / marcato
   { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0050f, 0.5f, 0.9993f,  0.5f, 0.12f, 0.0030f, 0.40f, 0, true,  false },  // staccato
   { MODE_BOW,    0.13f, 0.6f, 1.2f, 0.0080f, 0.6f, 0.9985f,  0.2f, 0.05f, 0.0030f, 0.30f, 0, true,  false },  // spiccato
+  { MODE_PLUCK,  0.11f, 1.0f, 1.0f, 0.0f,    0.0f, 0.9990f,  0.0f, 0.0f,  0.0030f, 1.80f, 0, false, false },  // pizzicato: longer natural ring-out
+  { MODE_BOW,    0.08f, 0.35f,0.9f, 0.0010f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.0007f, 1.00f, 12, false, true },  // flageolet (harmonics)
   { MODE_BOW,    0.28f, 0.5f, 0.8f, 0.0008f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00045f,0.60f, 0, false, true  },  // sul tasto / flautando
   { MODE_BOW,    0.035f,1.1f, 1.0f, 0.0015f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00045f,0.60f, 0, false, true  },  // sul ponticello
   { MODE_STRIKE, 0.11f, 1.0f, 1.0f, 0.0f,    0.0f, 0.9990f,  0.0f, 0.0f,  0.0030f, 0.12f, 0, false, false },  // col legno battuto
-  { MODE_BOW,    0.08f, 0.35f,0.9f, 0.0010f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.0007f, 1.00f, 12, false, true },  // flageolet (harmonics)
-  { MODE_PLUCK,  0.11f, 1.0f, 1.0f, 0.0f,    0.0f, 0.9990f,  0.0f, 0.0f,  0.0030f, 1.80f, 0, false, false },  // pizzicato: longer natural ring-out
-  { MODE_BOW,    0.11f, 1.0f, 1.0f, 0.0010f, 0.0f, 0.9990f,  0.0f, 0.0f,  0.00012f, 0.60f, 0, false, true  },  // portamento
 };
 
 // ------------------------------------------------------------------ models
@@ -167,17 +171,17 @@ static const StrModelDef STR_MODELS[MDL_COUNT] = {
 // noise transient per articulation: bow scratch at the start of a stroke,
 // finger snap (pizzicato), wood click (col legno)
 static const float STR_ARTIC_SCRATCH[ART_COUNT] = {
+  0.35f,   // portamento
   0.35f,   // legato
   0.65f,   // detache
   1.00f,   // martele
   0.80f,   // staccato
   0.90f,   // spiccato
+  0.80f,   // pizzicato
+  0.30f,   // flageolet
   0.25f,   // sul tasto
   0.75f,   // sul ponticello
   1.20f,   // col legno
-  0.30f,   // flageolet
-  0.80f,   // pizzicato
-  0.35f,   // portamento
 };
 
 // lowest open string per family (Hz): notes below are played an octave up
@@ -253,6 +257,7 @@ struct StrVoice {
   float vibIntent;                // vibrato intention for this note
   float vibGrow;                  // vibrato grows while the note lasts (0 -> 1)
   float levComp;                  // dynamic curve: level growth above normal is gentler
+  float at, atSl, atVib, atLev;   // aftertouch (v1.34): CV IN RATE change since the note start
   float relK;                     // smooth release speed of the bow
   uint32_t relN;                  // samples since the release
   bool relStop;                   // bow stops on the string (damped) instead of lifting
@@ -311,6 +316,13 @@ struct StrBrain {
   float    vibIntent;             // vibrato intention (1 = neutral)
   bool     phraseStart;           // new phrase: down-bow, gentle placement
   bool     connected;             // tied to the previous note (no new bow)
+  // v1.34: gate length, look-ahead, long-term arc, bow planning
+  uint8_t  nHist;                 // notes with a known gate length (0 = none yet)
+  float    dutyAvg;               // typical gate length / note interval
+  float    predIoi, predGate;     // expected length of this note and of its gate (s)
+  uint8_t  lenClass;              // 0 long (tied), 1 normal, 2 short, 3 very short
+  uint8_t  phraseN;               // phrase number in the long arc (8 phrases)
+  bool     downBow;               // this note falls on a heavy beat: down-bow
 };
 
 struct StringsEngine {
@@ -367,6 +379,8 @@ struct StringsEngine {
   float air;                      // "air" band amount (top octave lift)
   float velocity;                 // dynamic gate level (1 = normal), sampled per note
   float noteDur;                  // expected note length (s): time between the last gates
+  float noteAhead;                // v1.34: this note's expected length (rhythm pattern look-ahead)
+  bool  articLocked;              // v1.34: ARTIC CV patched -> no gate-length articulation
   // tempo from the gates: vibrato and tremolo lock to it
   uint32_t sinceGate;             // samples since the last gate start
   uint32_t clockPeriod;           // samples per beat (0 = no clock)
@@ -382,6 +396,9 @@ struct StringsEngine {
   uint8_t  patLen;                // pattern length in notes (0 = none found)
   uint8_t  patPulses;             // pattern length in pulses (one bar of the ostinato)
   uint32_t beatCand;              // a new beat waits for a second opinion
+  uint32_t onG[STR_ONSETS];       // v1.34: gate length per onset (samples)
+  uint32_t beatAnchor;            // v1.34: time of a heavy beat (bar start / accent)
+  uint8_t  barPulses;             // v1.34: heavy-beat spacing in pulses (0 = unknown)
   float vibHz, tremHz;            // current vibrato rate, tremolo cycle rate
   float dcx, dcy, level;
   uint8_t famUsed;                // bodies with players
@@ -520,7 +537,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.alfT = 0.0f;
     v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = 0.0f;
     v.attackK = 1.0f / (0.075f * STR_SR);
-    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.levComp = 1.0f;
+    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.levComp = 1.0f; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f;
     v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
     {                                                        // quarter-tone places, spread over the players
       static const float places[STR_VOICES] = { 0.125f, -0.5f, 0.75f, -1.0f, 0.375f, -0.25f };
@@ -550,6 +567,8 @@ static inline void stringsInit(StringsEngine &s) {
   s.noteDur = 0.6f;                 // free playing: a normal bow
   s.sinceGate = (uint32_t)(5.0f * STR_SR); s.clockPeriod = 0;   // the first gate counts too
   s.now = 0; s.onW = 0; s.onN = 0; s.onCount = 0; s.onSeen = 0;
+  s.noteAhead = 0.6f; s.articLocked = false; s.beatAnchor = 0; s.barPulses = 0;
+  for (int i = 0; i < STR_ONSETS; i++) s.onG[i] = 0;
   s.pulse = 0; s.patLen = 0; s.patPulses = 0; s.beatCand = 0; s.vibHz = 0; s.tremHz = 6.5f;
   s.instrument = MDL_SOLO_VIOLIN; s.layout = LAY_UNISON; s.maxVoices = STR_VOICES;
   s.trillPh = 0; s.trillInc = 9.0f / STR_SR; s.trillPrev = false;
@@ -609,7 +628,7 @@ static inline void stringsTempo(StringsEngine &s) {
       const float r = floorf(m + 0.5f);
       if (r < 1.0f || r > 12.0f || fabsf(m - r) > 0.1f) off++;
     }
-    if (off == 2) { n = 3; s.onN = 3; }
+    if (off == 2) { n = 3; s.onN = 3; s.beatAnchor = s.onT[(s.onW + STR_ONSETS - 3) % STR_ONSETS]; }
   }
   int ni = n - 1;
   uint32_t ioi[STR_ONSETS - 1];
@@ -673,6 +692,7 @@ static inline void stringsTempo(StringsEngine &s) {
 
   // 3. beat in pulses
   int beat = 0;
+  bool accBar = false;                                     // v1.34: heavy beats from the accents
   if (accents) {                                           // regular accents = the beat
     int last = -1, sp = 0, pos = 0; bool regular = true; int cnt = 0;
     for (int i = 0; i < n; i++) {
@@ -683,6 +703,10 @@ static inline void stringsTempo(StringsEngine &s) {
       if (i < ni) pos += u[i];
     }
     if (regular && cnt >= 2 && sp > 0) {
+      // v1.34 bow planning: the accents are the heavy beats (down-bow)
+      accBar = true;
+      s.barPulses = (uint8_t)(sp > 255 ? 255 : sp);
+      for (int i = n - 1; i >= 0; i--) if (acc[i]) { s.beatAnchor = s.onT[(start + i) % STR_ONSETS]; break; }
       // the accents mark the grid; the beat is the division of it nearest 128 bpm
       float d = 1e9f;
       for (int b = 1; b <= sp; b++) {
@@ -702,6 +726,12 @@ static inline void stringsTempo(StringsEngine &s) {
       if (e < d) { d = e; beat = b; }
     }
   }
+  if (!accBar) {
+    // no accents: the bar is the ostinato (when it spans 2+ beats) or 4 beats,
+    // counted from the first note of the rhythm
+    const int bp = (beat && bar >= 2 * beat) ? bar : 4 * (beat ? beat : 1);
+    s.barPulses = (uint8_t)(bp > 255 ? 255 : bp);
+  }
   const uint32_t newBeat = (uint32_t)(beat * best);
   // follow small changes smoothly, take a jump only when it is confirmed
   const uint32_t old = s.clockPeriod;
@@ -716,6 +746,30 @@ static inline void stringsTempo(StringsEngine &s) {
   }
 }
 
+// v1.34: the articulation in use. AUTO = from the gate length; the bowed
+// strokes detache ... spiccato follow the gate length around the knob's
+// choice (a long gate one step more connected, a short one shorter);
+// legato, portamento, pizzicato and the tone colours stay as chosen, and so
+// does everything when the ARTIC CV is patched (an explicit CV wins)
+static const uint8_t STR_ART_BY_LEN[5][4] = {
+  //  long          normal        short         very short
+  { ART_LEGATO,   ART_DETACHE,  ART_STACCATO, ART_SPICCATO },   // AUTO
+  { ART_LEGATO,   ART_DETACHE,  ART_STACCATO, ART_SPICCATO },   // detache
+  { ART_MARTELE,  ART_MARTELE,  ART_STACCATO, ART_STACCATO },   // martele
+  { ART_DETACHE,  ART_STACCATO, ART_STACCATO, ART_SPICCATO },   // staccato
+  { ART_STACCATO, ART_SPICCATO, ART_SPICCATO, ART_SPICCATO },   // spiccato
+};
+static inline uint8_t strArticResolve(const StringsEngine &s) {
+  const StrModelDef &M = s.model;
+  if (s.pizz) return ART_PIZZICATO;
+  if (M.artic >= 0) return (uint8_t)M.artic;
+  const uint8_t c = s.brain.lenClass < 4 ? s.brain.lenClass : 1;
+  if (s.artic >= ART_COUNT) return STR_ART_BY_LEN[0][c];                  // AUTO
+  if (!s.articLocked && s.artic >= ART_DETACHE && s.artic <= ART_SPICCATO)
+    return STR_ART_BY_LEN[1 + s.artic - ART_DETACHE][c];
+  return s.artic;
+}
+
 static inline void stringsControl(StringsEngine &s) {
   stringsTempo(s);
   const StrModelDef &M = STR_MODELS[s.instrument < MDL_COUNT ? s.instrument : 0];
@@ -727,8 +781,8 @@ static inline void stringsControl(StringsEngine &s) {
   const bool divisi = (lay == LAY_DIVISI_MAJOR || lay == LAY_DIVISI_MINOR);
   const int8_t *pool = (lay == LAY_DIVISI_MAJOR) ? STR_DIVISI_MAJOR : STR_DIVISI_MINOR;
 
-  const uint8_t art = s.pizz ? (uint8_t)ART_PIZZICATO
-                  : (M.artic >= 0 ? (uint8_t)M.artic : (s.artic < ART_COUNT ? s.artic : 0));
+  s.model = M;                                             // (the resolver reads it)
+  const uint8_t art = strArticResolve(s);
   s.articEff = art;
   const StrArticDef &A = STR_ARTIC[art];
   // ---- knobs a model does not use get a job that fits the model
@@ -851,7 +905,7 @@ static inline void stringsControl(StringsEngine &s) {
     // finger travel (was per sample): interval, phrase length and playing
     // energy shape the glide; the cello's finger has more weight
     {
-      const StrArticDef &AA = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : 0];
+      const StrArticDef &AA = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : (uint8_t)ART_LEGATO];
       float gk = AA.glide;
       if (AA.legato && v.gate && v.env > 0.05f && AA.glide > 0.0f) {
         const float intervalSemis = 12.0f * fabsf(log2f(v.lenTarget / strClamp(v.len, 8.0f, (float)(STR_NECK_LEN - 8))));
@@ -872,6 +926,16 @@ static inline void stringsControl(StringsEngine &s) {
                             * (0.45f + 0.55f * v.vel) * v.bowMul * v.pe;
       const float t = intensity > 1.0f ? powf(intensity, -STR_DYN_COMP) : 1.0f;
       v.levComp += (t - v.levComp) * 0.25f;
+    }
+    // v1.34 aftertouch: CV IN RATE pressed further than at the note start
+    // = more bow weight (grip, brighter) and a wider vibrato; easing off =
+    // lighter and calmer. Without CV the level never moves, so nothing changes
+    {
+      const float d = v.gate ? strClamp(s.velocity - v.vel, -0.8f, 0.8f) : 0.0f;
+      v.at += (d - v.at) * 0.3f;
+      v.atSl = exp2f(-2.0f * v.at);
+      v.atLev = 1.0f + 0.35f * v.at;                        // ~+1.3 dB per volt-ish of pressing
+      v.atVib = 1.0f + (v.at > 0.0f ? 0.9f * v.at : 0.4f * v.at);
     }
 
     // slow intonation drift: every player wanders a few cents
@@ -965,7 +1029,6 @@ static inline void stringsControl(StringsEngine &s) {
       y.out = STR_SYM_LEVEL * (s.mute ? 0.5f : 1.0f);
     }
   }
-  s.model = M;
 }
 
 // ------------------------------------------------------------------ audio (interrupt)
@@ -1015,7 +1078,40 @@ static inline void strBrainNote(StringsEngine &s) {
   const bool newPhrase = (b.idx == 0 && b.peak < -90.0f) || rest || ioi > 2.4f * b.ioiAvg || gap > 1.2f;
   b.connected = !newPhrase && gap < 0.04f;
   const float interval = newPhrase ? 0.0f : semis - b.prevSemis;
-  if (newPhrase) { b.idx = 0; b.peak = semis; }
+  if (newPhrase) { b.idx = 0; b.peak = semis; b.phraseN = s.onN <= 1 ? 0 : (uint8_t)(b.phraseN + 1); }
+
+  // ---- v1.34 gate length as information: the previous gate against its
+  //      interval (the duty) -> how long the gates are in this music
+  const uint8_t k  = (uint8_t)((s.onW + STR_ONSETS - 1) % STR_ONSETS);   // this note
+  const uint8_t kp = (uint8_t)((k + STR_ONSETS - 1) % STR_ONSETS);       // the previous note
+  if (s.onN <= 1) b.nHist = 0;                                            // a new rhythm
+  else if (ioi < 3.0f) {
+    const float g = (b.haveOff && b.offNow > b.onNow) ? (float)(b.offNow - b.onNow) / STR_SR : ioi;
+    s.onG[kp] = (uint32_t)(strClamp(g, 0.0f, ioi) * STR_SR);
+    const float d = strClamp(g / (ioi > 0.01f ? ioi : 0.01f), 0.0f, 1.0f);
+    b.dutyAvg = b.nHist ? b.dutyAvg + (d - b.dutyAvg) * 0.5f : d;
+    if (b.nHist < 255) b.nHist++;
+  }
+  // look-ahead: in a recognised pattern this note will be as long as the
+  // same note one pattern ago; otherwise the typical note with the typical gate
+  b.predIoi = b.nHist ? b.ioiAvg : 0.6f;
+  b.predGate = b.dutyAvg * b.predIoi;
+  {
+    const int L = s.patLen;
+    if (L && b.nHist && s.onN > L + 1) {
+      const uint8_t a0 = (uint8_t)((k + STR_ONSETS - L) % STR_ONSETS), a1 = (uint8_t)((a0 + 1) % STR_ONSETS);
+      b.predIoi  = (float)(s.onT[a1] - s.onT[a0]) / STR_SR;
+      b.predGate = (float)s.onG[a0] / STR_SR;
+    }
+  }
+  s.noteAhead = b.nHist ? strClamp(b.predIoi, 0.05f, 3.0f) : s.noteDur;
+  // length class for the articulation
+  {
+    const float duty = b.predGate / (b.predIoi > 0.01f ? b.predIoi : 0.01f);
+    b.lenClass = !b.nHist || b.connected || duty > 0.9f ? 0
+               : (b.predGate < 0.12f ? 3 : (b.predGate < 0.25f || duty < 0.45f ? 2 : 1));
+  }
+  s.articEff = strArticResolve(s);                          // takes effect on this very note
   // bow energy: a phrase opens a little gentler and grows over its first
   // notes; rising lines lean in, falling lines relax; a new high point of
   // the phrase gets a little more
@@ -1032,8 +1128,26 @@ static inline void strBrainNote(StringsEngine &s) {
   if (newPhrase) att *= 1.25f;                               // the bow is placed, not thrown
   // vibrato intention from the note lengths: quick notes hardly any, long
   // notes the full vibrato (it then still grows while the note lasts)
-  const float len = strClamp(b.ioiAvg, 0.05f, 3.0f);
+  const float len = strClamp(b.nHist ? b.predIoi : b.ioiAvg, 0.05f, 3.0f);
   vib *= len < 0.22f ? 0.35f : (len < 0.5f ? 0.35f + 0.65f * (len - 0.22f) / 0.28f : 1.0f);
+  // v1.34 vibrato as a reaction: a soft, long note arrived at by a leap up
+  // gets the most vibrato; quick passages almost none (above)
+  if (interval >= 3.0f && b.predIoi > 0.6f && s.velocity < 0.8f) vib += 0.30f;
+  // v1.34 long-term arc: over 8 phrases the playing builds up and settles
+  // again, so a repeated sequence sounds different the 4th time (deterministic)
+  {
+    static const float ARC[8] = { 0.95f, 0.98f, 1.00f, 1.03f, 1.06f, 1.08f, 1.02f, 0.97f };
+    const float arc = ARC[b.phraseN & 7];
+    e *= arc; vib += 1.5f * (arc - 1.0f);
+  }
+  // v1.34 bow planning: heavy beats (bar start / accents) on a down-bow and
+  // a little weight; the notes in between alternate (with a natural retake)
+  b.downBow = false;
+  if (s.pulse && s.barPulses && b.nHist) {
+    const float m = (float)(s.now - s.beatAnchor) / (float)s.pulse;
+    const int mi = (int)(m + 0.5f);
+    if (fabsf(m - (float)mi) < 0.25f && mi % s.barPulses == 0) { b.downBow = true; e *= 1.03f; }
+  }
   // expression depth (SPREAD on models without a layout to choose): 0 = a
   // neutral player, 1 = natural default, 2 = twice the shaping
   const float x = s.expr;
@@ -1107,6 +1221,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     s.onW = (uint8_t)((s.onW + 1) % STR_ONSETS);
     if (s.onN < STR_ONSETS) s.onN++;
     s.onCount++;
+    if (s.onN == 1) s.beatAnchor = s.now;                     // the rhythm starts here (bar 1)
     // each new note gives the players a slightly staggered bow-stroke phase
     for (int i = 0; i < STR_VOICES; i++)
       s.v[i].tremPh = 0.25f + 0.01f * (float)i;
@@ -1121,10 +1236,14 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   if (s.sinceGate > (uint32_t)(4.0f * STR_SR)) { s.clockPeriod = 0; s.pulse = 0; s.patLen = 0; }   // clock stopped
 
   if (gate != s.gatePrev) {
+    // v1.34 ensemble: player 1 (the concertmaster) leads, the others follow
+    // a few ms later; at a phrase start they breathe together (much tighter)
+    const float together = (gate && s.brain.phraseStart) ? 0.4f : 1.0f;
     for (int i = 0; i < STR_VOICES; i++) {
       StrVoice &v = s.v[i];
       const float r = 0.5f + 0.5f * strRand(s);
-      v.onset = solo ? 0 : (uint32_t)(r * (gate ? 0.035f : 0.015f) * M.tight * STR_SR);
+      v.onset = (solo || i == 0) ? 0
+              : (uint32_t)((gate ? 0.004f + 0.028f * r * together : 0.002f + 0.013f * r) * M.tight * STR_SR);
     }
     s.gatePrev = gate;
   }
@@ -1134,7 +1253,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   // the weakly driven periods lose level, give it back
   const int ovrDiv = M.over > 0.0f ? (s.pressure > 0.75f ? 3 : (s.pressure > 0.4f ? 2 : 1)) : 1;
   const float ovrGain = ovrDiv == 3 ? 2.0f : (ovrDiv == 2 ? 1.6f : 1.0f);
-  const StrArticDef &A = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : 0];
+  const StrArticDef &A = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : (uint8_t)ART_LEGATO];
   const uint32_t strokeMax = (uint32_t)(A.stroke * s.strokeMul * STR_SR);
   float famBus[STR_FAMILIES]  = { 0, 0, 0, 0 };   // divisi players
   float leadBus = 0.0f;                              // player 1
@@ -1153,11 +1272,11 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         // short notes (fast tempo) and martele: the bow stops on the string,
         // a short bite and the string is damped; long notes: the bow lifts
         // off with a whisper, the string rings on, slower taper for longer notes
-        v.relStop = A.mode == MODE_BOW && (s.noteDur < 0.35f || s.articEff == ART_MARTELE);
+        v.relStop = A.mode == MODE_BOW && (s.noteAhead < 0.35f || s.articEff == ART_MARTELE);
         const float releaseEnergy = 0.75f + 0.25f * strClamp(v.vel, 0.0f, 1.0f);
         // Ease the bow away; the string and body then keep their own decay.
         float tau = v.relStop ? (0.065f + 0.025f * (1.0f - releaseEnergy))
-                              : strClamp(0.16f + 0.10f * s.noteDur, 0.16f, 0.32f);
+                              : strClamp(0.16f + 0.10f * s.noteAhead, 0.16f, 0.32f);
         if (v.family == FAM_CELLO) tau *= 1.18f;
         else if (v.family == FAM_BASS) tau *= 1.25f;
         v.relK = 1.0f / (tau * STR_SR);
@@ -1188,8 +1307,12 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           v.attackK = 1.0f / (attackTau * STR_SR);
           // bow speed from the note length: short notes (fast tempo) fast bow,
           // long notes slow bow (0.6 s = normal)
-          v.bowMul = strClamp(sqrtf(0.6f / strClamp(s.noteDur, 0.05f, 4.0f)), 0.6f, 1.6f);
-          v.bowUsed = 0.0f; v.turn = 0;
+          // v1.34: from the look-ahead (this note's expected length), so the
+          // player divides the bow: a long note starts slower, a short one faster
+          v.bowMul = strClamp(sqrtf(0.6f / strClamp(s.noteAhead, 0.05f, 4.0f)), 0.6f, 1.6f);
+          // section players start at different points of their bow, so their
+          // bow changes on long notes are spread out (player 1 starts fresh)
+          v.bowUsed = (solo || i == 0) ? 0.0f : 0.35f * (0.5f + 0.5f * strRand(s)); v.turn = 0;
           // the string alone gives a slow bow more level than a player would:
           // slow ~-2 dB, fast ~+2 dB against a normal bow (measured)
           v.bowGain = v.bowMul < 1.0f ? 1.0f - 0.96f * (1.0f - v.bowMul) : 1.0f;
@@ -1200,12 +1323,12 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           const float transientDynamics = (0.28f + 0.42f * strClamp(v.vel, 0.0f, 1.0f))
                                         * (0.78f + 0.22f * s.pressure)
                                         * (0.85f + 0.30f * (0.5f + 0.5f * strRand(s)));
-          v.tran = STR_ARTIC_SCRATCH[s.articEff < ART_COUNT ? s.articEff : 0]
+          v.tran = STR_ARTIC_SCRATCH[s.articEff < ART_COUNT ? s.articEff : (uint8_t)ART_LEGATO]
                  * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) * transientDynamics;
           // The onset noise now follows note dynamics, with a lower ceiling;
           // bow attacks are especially restrained while pluck character remains.
           if (A.mode == MODE_BOW) v.tran *= 0.025f;
-          if (s.brain.phraseStart && A.mode == MODE_BOW) v.dir = 1.0f;   // a phrase starts down-bow
+          if ((s.brain.phraseStart || s.brain.downBow) && A.mode == MODE_BOW) v.dir = 1.0f;   // phrase start / heavy beat: down-bow
           else if (A.alternate) v.dir = -v.dir;               // up-bow / down-bow
           // A legato finger change keeps the current string length and slides to the new pitch.
           // Detached/retriggered notes start directly at their target pitch.
@@ -1285,7 +1408,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     const float vibTarget = (s.vibrato && (v.gate || (v.env > 0.05f && !v.fingerOff)) && A.mode == MODE_BOW && !v.vibDelay)
                           ? v.vibDepth * (0.6f + 0.4f * s.speed) * (0.75f + 0.25f * v.vel)
                             * (0.85f + 0.15f * s.pressure) * v.jitD * (0.4f + 0.6f * v.vibWarm)
-                            * v.vibIntent * (0.5f + 0.5f * v.vibGrow) : 0.0f;
+                            * v.vibIntent * (0.5f + 0.5f * v.vibGrow) * v.atVib : 0.0f;
     v.vibAmt += (vibTarget - v.vibAmt) * 0.00007f;
     // the finger rolls back from the note: the pitch swings mostly below it,
     // and the roll is a little asymmetric (a touch of the 2nd harmonic)
@@ -1376,7 +1499,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // the same bow force on a slower bow presses relatively harder: keep it
       // in the clean (Helmholtz) range
       const float bowPressure = (v.dir > 0.0f) ? 0.998f : 1.002f;
-      float sl = (s.slope * v.slMul + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite
+      float sl = (s.slope * v.slMul * v.atSl + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite
                 - 0.6f * (v.vel - 1.0f)) * bowPressure;
       if (M.over > 0.0f) {
         sl -= 0.6f * M.over;                                 // overpressure: heavy bow
@@ -1424,7 +1547,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // dynamics: the string alone follows the bow speed unevenly from note to
     // note; a player also uses force and contact point, so the note level
     // follows the dynamic gate too (1 = no dynamic gate = unchanged)
-    const float dyn = v.gain * v.bowGain * ovrGain * (0.45f + 0.55f * v.vel) * v.levComp;
+    const float dyn = v.gain * v.bowGain * ovrGain * (0.45f + 0.55f * v.vel) * v.levComp * v.atLev;
     if (i == 0) leadBus = radiated * dyn;                    // force on the bridge
     else        famBus[v.family] += radiated * dyn;
   }

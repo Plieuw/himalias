@@ -2,53 +2,69 @@
 //  Himalia firmware -- Strings (bowed-string physical model), beta
 //
 //  SAMPLE OUT: up to six bowed strings from one pitch CV (strings_engine.h)
-//   - SAMPLE TUNE knob + CV ....... pitch: the knob spans the instrument's real
-//                                   range (left = lowest open string: violin G3,
-//                                   viola C3, cello C2, bass E1), CV 1 V/oct on top
-//   - RATCHET knob ................ model (18), grouped: the instruments first
-//                                   (solo violin, solo viola, solo cello, violin /
-//                                   viola / cello section, full strings), then the
-//                                   playing styles (molto vibrato violin, romantic
-//                                   cello, tremolo section, trill section), then the
-//                                   film-score gestures from calm to driving
+//  The controls in playing order (v1.34): WHAT plays, HOW it is played, and
+//  the PERFORMANCE that drives it.
+//
+//  1. WHAT plays
+//   - RATCHET knob ................ model (18): the instruments (solo violin,
+//                                   solo viola, solo cello, violin / viola / cello
+//                                   section, full strings), the playing styles
+//                                   (molto vibrato, romantic cello, tremolo, trill),
+//                                   the film-score gestures from calm to driving
 //                                   (shimmer, emotional swell, heroic theme, epic
 //                                   ostinato, suspense), then experimental
-//                                   (overpressure -- PRESSURE: crunch / octave down
-//                                   / twelfth down -- and Threnody swarm)
+//                                   (overpressure, Threnody swarm)
+//   - SAMPLE TUNE knob + CV ....... pitch: the knob spans the instrument's real
+//                                   range (left = lowest open string), CV 1 V/oct
 //   - SPREAD knob + CV ............ layout: unison, octaves, fifths, major, minor,
-//                                   divisi major, divisi minor, cluster
-//                                   models with no layout to choose (solo, or a
-//                                   fixed layout): expression depth (left neutral,
-//                                   centre natural, right very expressive);
-//                                   Threnody: swarm width; suspense: cluster width
+//                                   divisi major, divisi minor, cluster; models
+//                                   without a layout to choose: expression depth
+//                                   (left neutral, centre natural, right very
+//                                   expressive); Threnody: swarm width; suspense:
+//                                   cluster width
+//  2. HOW it is played
+//   - SQUARES MAIN TUNE knob + CV . articulation, long -> short, then tone colour
+//                                   soft -> harsh: AUTO, portamento, legato,
+//                                   detache, martele, staccato, spiccato,
+//                                   pizzicato, flageolet, sul tasto, sul
+//                                   ponticello, col legno. AUTO: the gate length
+//                                   decides (tied/long = legato, normal = detache,
+//                                   short = staccato, very short = spiccato);
+//                                   detache ... spiccato also follow the gate
+//                                   length around the chosen stroke. CV: 1 V = one
+//                                   step from the knob (a patched CV = exactly that
+//                                   articulation). Models with a fixed articulation:
+//                                   a gesture (slide time, tremolo speed, trill
+//                                   interval, stroke length, accent, swell time)
 //   - SAMPLE SELECT knob + CV ..... playing zone: contact point and force together
-//                                   (left = over the fingerboard, light, soft and
-//                                   dark; centre = normal; right = near the bridge,
-//                                   firm, loud and bright); CV 1 V = 10 %
+//                                   (left = fingerboard, soft and dark; centre =
+//                                   normal; right = near the bridge, loud and
+//                                   bright); CV 1 V = 10 %
 //   - CLOCK RATE knob ............. bow speed, log scale ~9 ... 25 ... 70 cm/s
+//  3. The PERFORMANCE
+//   - TRIGGER in / button ......... gate: bow / pluck / strike. The gate length is
+//                                   information too (articulation, bow division)
+//   - CV IN RATE jack ............. dynamic gate / bow CV, 0 ... 10 V: the level at
+//                                   the note start is how hard the note is played;
+//                                   changing it during the note is aftertouch (more
+//                                   = more bow weight and vibrato, less = lighter)
+//   - A/B button (squares side) ... A = vibrato, B = senza vibrato
+//   - BIT switch .................. tremolo
+//   - A/B button (sample side) .... con sordino (mute)
+//  Himalia reads every phrase as a performance (HAESE): phrase shape, a long
+//  arc over 8 phrases, heavy beats on a down-bow, the bow divided over the
+//  expected note length, a section that follows its leader.
+//
+//  Outputs and LEDs
+//   - noise side DAC out .......... divisi players only (players 2 ... 6) as strings
+//   - square outputs 1 ... 6 ...... every player's note as a square wave while it sounds
+//   - PA22 (digital noise out) .... 5 ms trigger when the divisi changes
 //   - LED CLK ..................... blinks on the detected beat
 //   - diagnose: hold TRIGGER while powering up -> divisi out = CPU load
 //                                   (0 ... +5 V = 0 ... 100 %), trigger out high
 //                                   while the CPU guard has dropped players
-//   - CV IN RATE jack ............. dynamic gate / bow CV: the level (0 ... 10 V)
-//                                   is how hard the bow plays (speed, pressure,
-//                                   accent, scratch, vibrato); also a gate
-//   - SQUARES MAIN TUNE knob + CV . articulation: legato, detache, martele,
-//                                   staccato, spiccato, sul tasto, sul ponticello,
-//                                   col legno, flageolet, pizzicato, portamento;
-//                                   CV: 1 V = one articulation step from the knob
-//                                   models with a fixed articulation: a gesture
-//                                   (romantic cello slide time, tremolo speed,
-//                                   trill interval, ostinato stroke length, heroic
-//                                   accent, swell time); CV 1 V = 10 %
-//   - TRIGGER in / button ......... gate: bow / pluck / strike; the time between
-//                                   gates is the tempo for vibrato and tremolo
-//   - A/B button (sample side) .... con sordino (mute)
-//   - A/B button (squares side) ... A = vibrato, B = senza vibrato
-//   - BIT switch .................. tremolo (on the tempo)
-//   - noise side DAC out .......... divisi players only (players 2 ... 6) as strings
-//   - square outputs 1 ... 6 ...... every player's note as a square wave while it sounds
-//   - PA22 (digital noise out) .... 5 ms trigger when the divisi changes
+//   - the digital-noise TRIG jack and the analog noise section are hardware
+//     only: no microcontroller pin reads them (schematic V1.5)
 //
 //  Generative divisi: the Turing register of the former squares sequencer
 //  (clocked by the trigger) chooses which players of the section play and
@@ -59,7 +75,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.33.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.34.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -692,19 +708,22 @@ void loop() {
   if(hz > 3500.0f) hz = 3500.0f;
   strings.rootHz = hz;
 
-  // ---- articulation: SQUARES MAIN TUNE knob + CV (11 steps, CV can sequence them)
-  //      legato, detache, martele, staccato, spiccato, sul tasto, sul ponticello,
-  //      col legno, flageolet, pizzicato, portamento
+  // ---- articulation: SQUARES MAIN TUNE knob + CV (12 steps, CV can sequence them)
+  //      in playing order: AUTO (the gate length decides), portamento, legato,
+  //      detache, martele, staccato, spiccato, pizzicato, then the tone colours
+  //      soft -> harsh: flageolet, sul tasto, sul ponticello, col legno
   uint16_t art_poti = adc51.readAnalog(PB03,ADC_Channel15,false);
   uint16_t art_jack = adc51.readAnalog(PB04,ADC_Channel6,true);
   // knob picks the articulation, the CV adds 1 V per articulation step (so a
   // sequencer can step through them); 0 V / unpatched = the knob's choice
   static uint16_t art_state = 0;
-  int art = (int)selectHyst(art_poti, 150, 3900, ART_COUNT - 1, art_state);
-  if(art_jack < 4000) art += (int)lroundf(cvVolts(art_jack));   // normalled jack reads above 4000
+  int art = (int)selectHyst(art_poti, 150, 3900, ART_KNOB_STEPS - 1, art_state);
+  const bool art_cv = art_jack < 4000;                            // normalled jack reads above 4000
+  if(art_cv) art += (int)lroundf(cvVolts(art_jack));
   if(art < 0) art = 0;
-  if(art > ART_COUNT - 1) art = ART_COUNT - 1;
-  strings.artic = (uint8_t)art;
+  if(art > ART_KNOB_STEPS - 1) art = ART_KNOB_STEPS - 1;
+  strings.artic = art == 0 ? (uint8_t)ART_AUTO : (uint8_t)(art - 1);
+  strings.articLocked = art_cv;                                   // an explicit CV wins over the gate length
   // the same knob + CV as a continuous value (1 V = 10 %): models that fix
   // their articulation use it for a gesture of their own
   {

@@ -1,2 +1,3 @@
 # wavetable source files: check the license before committing them
 wavetables/*.wav
+__pycache__/

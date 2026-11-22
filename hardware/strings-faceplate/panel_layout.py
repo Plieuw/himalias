@@ -18,12 +18,12 @@ CAP = {"pot": 12.8, "pot_s": 9.1}        # knob diameters on the original (for t
 ELEMENTS = [
   # left column: jacks
   ("jack", 8.39, 19.71, "NOISE CV",   "CV filter analoge ruis (hardware, ongewijzigd)", "noise"),
-  ("jack", 8.39, 32.93, "VELOCITY",   "Dynamische gate 0-10 V: hoe hard de streek speelt; ook gate en tempo", "in"),
+  ("jack", 8.39, 32.93, "VELOCITY",   "Dynamische gate 0-10 V: niveau bij de aanzet = hoe hard; tijdens de noot = aftertouch (aandrukken); ook gate en tempo", "in"),
   ("jack", 8.39, 46.15, "NOISE TRIG", "Trigger digitale ruis (hardware, niet gelezen door de firmware)", "noise"),
-  ("jack", 8.39, 59.36, "GATE",       "Gate: streek / pluk / slag; het ritme geeft frase en tempo", "in"),
+  ("jack", 8.39, 59.36, "GATE",       "Gate: streek / pluk / slag; gatelengte = articulatie (AUTO), het ritme geeft frase, tel en tempo", "in"),
   ("jack", 8.39, 72.58, "1V/OCT",     "Toonhoogte 1 V/oct, continu (geen quantizer)", "in"),
   ("jack", 8.39, 85.79, "ZONE",       "CV speelzone (1 V = 10 %)", "in"),
-  ("jack", 8.39, 99.02, "ARTIC",      "CV articulatie: 1 V = 1 stap; bij vaste articulatie: gebaar (1 V = 10 %)", "in"),
+  ("jack", 8.39, 99.02, "ARTIC",      "CV articulatie: 1 V = 1 stap (gepatcht = precies die, geen gatelengte); bij vaste articulatie: gebaar (1 V = 10 %)", "in"),
   ("jack", 8.39, 112.23, "SPREAD",    "CV spread: layout / expressie / breedte", "in"),
   # right column
   ("jack",   72.69, 19.70, "NOISE",      "Analoge ruis uit (hardware, ongewijzigd)", "noise"),
@@ -45,7 +45,7 @@ ELEMENTS = [
   ("pot_s",  33.74, 86.76, "MODEL",      "Model 1-18: instrumenten, stijlen, filmgebaren, experimenteel", "ctl"),
   ("button", 57.20, 86.82, "MUTE",       "Con sordino (demper)", "ctl"),
   ("pot",    29.53, 112.12, "SPREAD",    "Layout; bij solo / vaste layout: expressie; zwerm- / clusterbreedte", "ctl"),
-  ("pot",    53.62, 112.11, "ARTIC",     "Articulatie (11); bij vaste articulatie: gebaar van het model", "ctl"),
+  ("pot",    53.62, 112.11, "ARTIC",     "Articulatie (12): AUTO = gatelengte beslist, dan lang -> kort -> klankkleur; bij vaste articulatie: gebaar van het model", "ctl"),
 ]
 
 # scales around knobs: (index in ELEMENTS, labels from 7 o'clock to 5 o'clock)
@@ -54,7 +54,7 @@ SCALES = {
   "BOW SPEED": ["9", "", "25", "", "70"],
   "ZONE":      ["TASTO", "", "NORM", "", "PONT"],
   "SPREAD":    ["UNI", "OCT", "5TH", "MAJ", "MIN", "DIV+", "DIV-", "CLU"],
-  "ARTIC":     ["LEG", "DET", "MAR", "STA", "SPI", "TAS", "PON", "COL", "FLA", "PIZ", "POR"],
+  "ARTIC":     ["AUTO", "POR", "LEG", "DET", "MAR", "STA", "SPI", "PIZ", "FLA", "TAS", "PON", "COL"],
   "MODEL":     ["1", "", "", "", "", "", "7", "", "", "", "11", "", "", "", "", "16", "", "18"],
   "NOISE MIX": ["RED", "", "WHT", "", "BLU"],
 }
