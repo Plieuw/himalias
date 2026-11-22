@@ -137,6 +137,35 @@ int main() {
   render(true, 30000, x);
   if (!render(false, 120000, x) || rms(x, 100000, 120000) > 0.005) { std::printf("FAIL release\n"); ++fails; }
 
+  // natural-default bow envelope: smooth instrument-aware attack and release
+  {
+    stringsInit(s);
+    s.instrument = MDL_SOLO_VIOLIN; s.artic = ART_LEGATO; s.rootHz = 440.0f;
+    stringsControl(s);
+    if (!render(true, 1, x)) ++fails;
+    const float violinAttackK = s.v[0].attackK;
+    if (!(violinAttackK > 0.0002f && violinAttackK < 0.0008f) || s.v[0].env > 0.002f) {
+      std::printf("FAIL violin natural attack coefficient / first-sample envelope: %.7f / %.5f\\n", violinAttackK, s.v[0].env); ++fails;
+    }
+    if (!render(true, 500, x) || !(s.v[0].env > 0.08f && s.v[0].env < 0.30f)) {
+      std::printf("FAIL violin attack did not ease in smoothly: %.4f\\n", s.v[0].env); ++fails;
+    }
+    if (!render(false, 1, x)) ++fails;
+    const float violinReleaseK = s.v[0].relK;
+
+    stringsInit(s);
+    s.instrument = MDL_SOLO_CELLO; s.artic = ART_LEGATO; s.rootHz = 130.8f;
+    stringsControl(s);
+    if (!render(true, 1, x)) ++fails;
+    const float celloAttackK = s.v[0].attackK;
+    if (!render(false, 1, x)) ++fails;
+    const float celloReleaseK = s.v[0].relK;
+    if (!(celloAttackK < violinAttackK && celloReleaseK < violinReleaseK)) {
+      std::printf("FAIL cello should have a more gradual attack/release than violin (attack %.7f/%.7f release %.7f/%.7f)\\n",
+                  celloAttackK, violinAttackK, celloReleaseK, violinReleaseK); ++fails;
+    }
+  }
+
   // every articulation on solo violin and cello section: finite, bounded, sounding
   for (int art = 0; art < ART_COUNT; ++art) {
     for (int ins = 0; ins < 2; ++ins) {
