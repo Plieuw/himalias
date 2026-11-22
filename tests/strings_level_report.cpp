@@ -10,7 +10,7 @@ struct Level { double rms; double peak; };
 
 static Level renderLevel(int model, float hz) {
   stringsInit(s);
-  s.instrument = (uint8_t)instrument;
+  s.instrument = (uint8_t)model;
   s.rootHz = hz;
   s.speed = 0.6f;
   s.pressure = 0.6f;
