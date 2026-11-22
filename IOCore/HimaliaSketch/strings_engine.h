@@ -29,6 +29,10 @@
 #endif
 
 #define STR_BEAT_TARGET (60.0f / 128.0f)   // preferred beat: the tempo lands nearest 128 BPM
+// v1.36 velocity: a wide dynamic range (pp ~ -19 dB against 1.0) and a
+// strong accent for hard notes; 1.0 (no CV) is the reference
+#define STR_VEL_LEV(x) (0.11f + 0.89f * strClampV(x))
+#define STR_VEL_ACC(x) (0.10f + 0.90f * strClampV(x) * strClampV(x) + 0.0001f)
 #define STR_SLIDE_MAX 12.0f  // v1.35: longest slide on one string (semitones)
 #define STR_VEL_WIN 0.025f  // v1.34.1: velocity = peak of the first 25 ms of a note
 #define STR_ONSETS 33       // gate starts kept for the rhythm analysis (32 intervals)
@@ -345,6 +349,9 @@ struct StrBrain {
   uint8_t  lenClass;              // 0 long (tied), 1 normal, 2 short, 3 very short
   uint8_t  phraseN;               // phrase number in the long arc (8 phrases)
   bool     downBow;               // this note falls on a heavy beat: down-bow
+  float    velAvg;                // v1.36: typical velocity in this music
+  float    accent;                // v1.36: accent intention for this note (1 = neutral)
+  uint8_t  velN;                  // v1.36: notes in velAvg
 };
 
 struct StringsEngine {
@@ -429,6 +436,7 @@ struct StringsEngine {
 };
 
 // ------------------------------------------------------------------ helpers
+static inline float strClampV(float x) { return x < 0.0f ? 0.0f : (x > 1.3f ? 1.3f : x); }
 static inline float strRand(StringsEngine &s) {            // -1 ... 1
   s.rng ^= s.rng << 13; s.rng ^= s.rng >> 17; s.rng ^= s.rng << 5;
   return (float)(int32_t)s.rng * (1.0f / 2147483648.0f);
@@ -581,7 +589,7 @@ static inline void stringsInit(StringsEngine &s) {
     StrBrain &b = s.brain;
     b.prevSemis = 0.0f; b.ioiAvg = 0.6f; b.onNow = b.offNow = 0; b.haveOff = false;
     b.idx = 0; b.peak = -99.0f;
-    b.energy = 1.0f; b.attackMul = 1.0f; b.vibIntent = 1.0f; b.phraseStart = true; b.connected = false;
+    b.energy = 1.0f; b.accent = 1.0f; b.velAvg = 1.0f; b.velN = 0; b.attackMul = 1.0f; b.vibIntent = 1.0f; b.phraseStart = true; b.connected = false;
   }
   s.bowNoise = 0.0f;
   s.transient = 1.0f;
@@ -955,7 +963,7 @@ static inline void stringsControl(StringsEngine &s) {
     // is untouched, so soft stays soft and firm playing keeps its headroom
     {
       const float intensity = (s.bowBase * s.speedCV / 0.113f) * exp2f(2.2f * (strClamp(s.pressure, 0.0f, 1.0f) - 0.5f))
-                            * (0.45f + 0.55f * v.vel) * v.bowMul * v.pe;
+                            * STR_VEL_LEV(v.vel) * v.bowMul * v.pe;
       const float t = intensity > 1.0f ? powf(intensity, -STR_DYN_COMP) : 1.0f;
       v.levComp += (t - v.levComp) * 0.25f;
     }
@@ -968,7 +976,9 @@ static inline void stringsControl(StringsEngine &s) {
       d = d > 0.04f ? d - 0.04f : (d < -0.04f ? d + 0.04f : 0.0f);
       d = strClamp(d, -0.8f, 0.8f);
       v.at += (d - v.at) * 0.3f;
-      v.atSl = exp2f(-2.0f * v.at);
+      // v1.36 velocity colours the tone too: hard = more grip (bright,
+      // biting), soft = lighter grip (round, dark); no CV (1.0) = unchanged
+      v.atSl = exp2f(-2.0f * v.at - 0.6f * (strClamp(v.vel, 0.0f, 1.3f) - 1.0f));
       v.atLev = 1.0f + 0.35f * v.at;                        // ~+1.3 dB per volt-ish of pressing
       v.atVib = 1.0f + (v.at > 0.0f ? 0.9f * v.at : 0.4f * v.at);
     }
@@ -1152,11 +1162,28 @@ static inline void strBrainNote(StringsEngine &s) {
   // bow energy: a phrase opens a little gentler and grows over its first
   // notes; rising lines lean in, falling lines relax; a new high point of
   // the phrase gets a little more
-  float e = 0.92f + 0.08f * (float)(b.idx < 3 ? b.idx : 3) / 3.0f;
-  e += 0.010f * strClamp(interval, -7.0f, 7.0f);
+  // v1.36: more energetic -- a wider build-up over the first notes, lines
+  // that clearly lean in / relax, a new high point that really arrives
+  float e = 0.86f + 0.18f * (float)(b.idx < 4 ? b.idx : 4) / 4.0f;
+  e += 0.022f * strClamp(interval, -7.0f, 7.0f);
   float vib = 1.0f;
   float att = 1.0f;
-  if (!newPhrase && semis > b.peak + 0.5f) { e += 0.05f; vib += 0.15f; b.peak = semis; }
+  float acc = 1.0f;
+  if (!newPhrase && semis > b.peak + 0.5f) { e += 0.10f; vib += 0.20f; acc *= 1.2f; b.peak = semis; }
+  // v1.36 adaptive: the player listens to how it is being played --
+  //  - a note harder than the music around it is meant: more bow, a sharper
+  //    attack and a real accent; a softer one is taken back further
+  //  - notes coming faster than before drive the line forward; slowing
+  //    down broadens it (less bow pressure, more singing vibrato)
+  //    (the velocity part runs 6 ms later, in strBrainVel: the CV may
+  //    arrive a moment after the gate)
+  {
+    if (!newPhrase && b.nHist >= 3 && ioi < 3.0f && b.ioiAvg > 0.05f) {
+      const float r = b.ioiAvg / (ioi > 0.05f ? ioi : 0.05f);   // > 1: faster than before
+      if (r > 1.12f) { e += 0.08f * strClamp(r - 1.0f, 0.0f, 1.0f); att *= 0.9f; }
+      if (r < 0.88f) { e -= 0.04f; vib += 0.25f * strClamp(1.0f - r, 0.0f, 0.6f); }
+    }
+  }
   // big leaps: a more deliberate placement and an expressive arrival
   const float leap = interval < 0 ? -interval : interval;
   if (leap >= 5.0f) { att *= 1.10f; vib += 0.10f; }
@@ -1185,13 +1212,14 @@ static inline void strBrainNote(StringsEngine &s) {
   if (s.pulse && s.barPulses && b.nHist) {
     const float m = (float)(s.now - s.beatAnchor) / (float)s.pulse;
     const int mi = (int)(m + 0.5f);
-    if (fabsf(m - (float)mi) < 0.25f && mi % s.barPulses == 0) { b.downBow = true; e *= 1.0f + 0.03f * s.beatW; }
+    if (fabsf(m - (float)mi) < 0.25f && mi % s.barPulses == 0) { b.downBow = true; e *= 1.0f + 0.05f * s.beatW; acc *= 1.0f + 0.25f * s.beatW; }
   }
   // expression depth (SPREAD on models without a layout to choose): 0 = a
   // neutral player, 1 = natural default, 2 = twice the shaping
   const float x = s.expr;
-  b.energy = strClamp(1.0f + (e - 1.0f) * x, 0.70f, 1.30f);
-  b.attackMul = strClamp(1.0f + (att - 1.0f) * x, 0.8f, 1.6f);
+  b.energy = strClamp(1.0f + (e - 1.0f) * x, 0.60f, 1.45f);
+  b.accent = strClamp(1.0f + (acc - 1.0f) * x, 0.5f, 2.5f);
+  b.attackMul = strClamp(1.0f + (att - 1.0f) * x, 0.6f, 1.6f);
   b.vibIntent = strClamp(1.0f + (vib - 1.0f) * x, 0.15f, 1.6f);
   b.phraseStart = newPhrase;
   // history
@@ -1199,6 +1227,29 @@ static inline void strBrainNote(StringsEngine &s) {
   b.prevSemis = semis;
   if (b.idx < 255) b.idx++;
   b.onNow = s.now;
+}
+
+// v1.36: the velocity part of the interpretation, 6 ms after the gate (the
+// velocity CV has settled by then): a note harder than the music around it
+// gets more bow and a real accent, a softer one is taken back further
+static inline void strBrainVel(StringsEngine &s) {
+  StrBrain &b = s.brain;
+  const float vel = strClamp(s.velocity, 0.0f, 1.3f);
+  const float dv = b.velN ? vel - b.velAvg : 0.0f;
+  b.velAvg = b.velN ? b.velAvg + (vel - b.velAvg) * 0.25f : vel;
+  if (b.velN < 255) b.velN++;
+  const float x = s.expr;
+  const float ev = 1.0f + 0.30f * strClamp(dv, -0.5f, 0.5f) * x;
+  float acc = dv > 0.12f ? 1.3f + 2.0f * (dv - 0.12f) : (dv < -0.12f ? 0.7f : 1.0f);
+  acc = strClamp(1.0f + (acc - 1.0f) * x, 0.5f, 2.5f);
+  b.energy = strClamp(b.energy * ev, 0.60f, 1.50f);
+  b.accent = strClamp(b.accent * acc, 0.4f, 3.0f);
+  for (int i = 0; i < STR_VOICES; i++) {                    // players that already started
+    StrVoice &v = s.v[i];
+    if (!v.active || !v.gate || v.onset) continue;
+    v.peT = b.energy;
+    v.accent *= acc;
+  }
 }
 
 // safety net before the DAC: a look-ahead limiter that only moves the gain
@@ -1266,6 +1317,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     strBrainNote(s);                                         // HAESE: how to play this note
   }
   if (!gate && s.gatePrev) { s.brain.offNow = s.now; s.brain.haveOff = true; }
+  if (gate && s.sinceGate == (uint32_t)(0.006f * STR_SR)) strBrainVel(s);   // v1.36
   // the dynamic gate may still be rising at the edge: keep the peak of the first 10 ms
   if (s.sinceGate < (uint32_t)(0.01f * STR_SR) && s.onN) {
     const uint8_t last = (uint8_t)((s.onW + STR_ONSETS - 1) % STR_ONSETS);
@@ -1361,7 +1413,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           // slow ~-2 dB, fast ~+2 dB against a normal bow (measured)
           v.bowGain = v.bowMul < 1.0f ? 1.0f - 0.96f * (1.0f - v.bowMul) : 1.0f;
           v.slMul = powf(v.bowMul, -0.6f);                     // the same Schelleng scaling per note
-          v.accent = A.accent * M.accent * s.accentMul * (0.4f + 0.6f * v.vel);
+          v.accent = A.accent * M.accent * s.accentMul * STR_VEL_ACC(v.vel) * s.brain.accent;
           // swell: long notes start soft and grow over ~1/3 of their expected
           // length (at most the model's swell time), short notes do not swell
           v.swell = (M.swell > 0 && s.noteAhead > 0.5f) ? 0.3f : 1.0f;
@@ -1400,7 +1452,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     if (v.velWin) {                                          // catch the velocity peak
       v.velWin--;
       const float vn = strClamp(s.velocity, 0.0f, 1.3f);
-      if (vn > v.vel) v.vel = vn;
+      if (vn > v.vel) { v.accent *= STR_VEL_ACC(vn) / STR_VEL_ACC(v.vel); v.vel = vn; }
     }
 
     // finger travel: speed computed at control rate (stringsControl)
@@ -1458,7 +1510,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     v.vs += vk * v.vc;
     v.vc -= vk * v.vs;
     const float vibTarget = (s.vibrato && (v.gate || (v.env > 0.05f && !v.fingerOff)) && A.mode == MODE_BOW && !v.vibDelay)
-                          ? v.vibDepth * (0.6f + 0.4f * s.speed) * (0.75f + 0.25f * v.vel)
+                          ? v.vibDepth * (0.6f + 0.4f * s.speed) * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.25f))
                             * (0.85f + 0.15f * s.pressure) * v.jitD * (0.4f + 0.6f * v.vibWarm)
                             * v.vibIntent * (0.5f + 0.5f * v.vibGrow) * v.atVib : 0.0f;
     v.vibAmt += (vibTarget - v.vibAmt) * 0.00007f;
@@ -1599,7 +1651,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // dynamics: the string alone follows the bow speed unevenly from note to
     // note; a player also uses force and contact point, so the note level
     // follows the dynamic gate too (1 = no dynamic gate = unchanged)
-    const float dyn = v.gain * v.bowGain * ovrGain * (0.45f + 0.55f * v.vel) * v.levComp * v.atLev;
+    const float dyn = v.gain * v.bowGain * ovrGain * STR_VEL_LEV(v.vel) * v.levComp * v.atLev;
     if (i == 0) leadBus = radiated * dyn;                    // force on the bridge
     else        famBus[v.family] += radiated * dyn;
   }

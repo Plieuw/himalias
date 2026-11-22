@@ -493,8 +493,24 @@ int main() {
     std::printf("legato drop %.0f%%/10ms, shift %.0f%%/60ms, portamento %.0f%%/60ms\n", a10 * 100, b60 * 100, c60 * 100);
   }
 
+  // v1.36: a note harder than the music around it gets a real accent and
+  // more bow; a softer one is taken back (the velocity is read 6 ms late)
+  {
+    stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.rootHz = 440.0f; stringsControl(s);
+    const float vel[6] = { 0.6f, 0.6f, 0.6f, 1.1f, 0.6f, 0.3f };
+    float acc[6], en[6];
+    for (int k = 0; k < 6; ++k)
+      for (int n = 0; n < 16000; ++n) {
+        if ((n & 127) == 0) { if (n == 128) s.velocity = vel[k]; stringsControl(s); }   // CV arrives after the gate
+        stringsTick(s, n < 13000);
+        if (n == 1000) { acc[k] = s.brain.accent; en[k] = s.brain.energy; }
+      }
+    if (!(acc[3] > 1.5f * acc[2] && en[3] > en[2])) { std::printf("FAIL velocity accent %.2f/%.2f\n", acc[3], acc[2]); ++fails; }
+    if (!(acc[5] < acc[4] && en[5] < en[4]))         { std::printf("FAIL soft note taken back\n"); ++fails; }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

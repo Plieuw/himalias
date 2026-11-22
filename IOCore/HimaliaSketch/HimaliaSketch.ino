@@ -81,7 +81,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.35.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.36.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -710,9 +710,10 @@ void loop() {
     static float cs = 0.0f;
     cs += (c - cs) * (c > cs ? 0.8f : 0.3f);             // v1.34.1: follow a rising CV at once (velocity)
     if(gate_in_use){
-      // 0 V ~ -13 dB (pp), top ~ +2 dB against no cable (measured on the model)
-      strings.velocity = 0.2f + 0.8f * cs;               // sampled per note by the engine
-      strings.speedCV  = 0.45f + 0.6f * cs;              // pp ... ff bow, never silent
+      // v1.36: 0 V ~ -24 dB (pp), 5 V ~ -5 dB, top ~ +2 dB against no cable
+      // (measured on the model); velocity also colours tone, accent, vibrato
+      strings.velocity = 0.05f + 0.96f * cs;             // sampled per note by the engine
+      strings.speedCV  = 0.40f + 0.64f * cs;             // pp ... ff bow, never silent
       strings_cv_bow  = false;
     } else {
       strings.velocity = cs;
