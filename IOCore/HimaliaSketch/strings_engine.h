@@ -1016,6 +1016,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           v.tran = STR_ARTIC_SCRATCH[s.articEff < ART_COUNT ? s.articEff : 0]
                  * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) * (0.6f + 0.6f * s.pressure)
                  * (0.3f + 0.7f * v.vel);
+          // Bowed-string onset: strongly soften the initial scratch/click.
+          // Keep pizzicato and col legno articulation levels unchanged.
+          if (A.mode == MODE_BOW) v.tran *= 0.12f;
           if (A.alternate) v.dir = -v.dir;                    // up-bow / down-bow
           // A legato finger change keeps the current string length and slides to the new pitch.
           // Detached/retriggered notes start directly at their target pitch.
@@ -1047,7 +1050,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // spiccato lift the bow after a fixed stroke even if the gate stays high
     bool bowing = v.gate && A.mode == MODE_BOW;
     if (bowing && strokeMax && v.strokeN > strokeMax) bowing = false;
-    if (bowing) v.env += (1.0f - v.env) * A.attack;
+    if (bowing) v.env += (1.0f - v.env) * (A.attack * 0.65f);
     else        v.env -= v.env * (strokeMax ? 0.004f : v.relK);     // short strokes lift fast
     if (!v.gate) {
       if (v.relN < 0xFFFFFFF0u) v.relN++;
