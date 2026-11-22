@@ -36,6 +36,22 @@ jobs:
           path: firmware-output/*
           if-no-files-found: error
           retention-days: 14
+      - name: Commit the firmware
+        if: github.event_name == 'push'
+        run: |
+          set -e
+          VERSION=$(sed -n 's/.*HIMALIA_FW_VERSION "\([^"]*\)".*/\1/p' IOCore/HimaliaSketch/HimaliaSketch.ino | sed 's/-strings-beta//')
+          DEST="firmware/Himalia_strings_v${VERSION}-beta.uf2"
+          cp firmware-output/HimaliaSketch.ino.uf2 "$DEST"
+          if [ -z "$(git status --porcelain -- "$DEST")" ]; then
+            echo "firmware already up to date"
+            exit 0
+          fi
+          git config user.name "himalia-ci"
+          git config user.email "ci@users.noreply.github.com"
+          git add "$DEST"
+          git commit -m "Strings v${VERSION}-beta: compiled firmware [skip ci]"
+          git push
       - name: Publish the beta release
         if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release]')
         env:
