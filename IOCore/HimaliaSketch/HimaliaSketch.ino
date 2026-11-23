@@ -77,7 +77,9 @@
 //
 //  Outputs and LEDs
 //   - noise side DAC out .......... divisi players only (players 2 ... 6) as strings
-//   - square outputs 1 ... 6 ...... every player's note as a square wave while it sounds
+//   - square outputs 1 ... 5 ...... players 1-5 as a square wave while they sound
+//   - square output 6 ............. ENVELOPE OUT (v1.44): follows SAMPLE OUT,
+//                                   sigma-delta + the output's filter capacitor
 //   - PA22 (DIV TRIG) ............. 5 ms on heavy beats, 25 ms at phrase ends
 //   - LED CLK ..................... blinks on the detected beat
 //   - diagnose: hold TRIGGER while powering up -> divisi out = CPU load
@@ -95,7 +97,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.43.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.44.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -420,7 +422,10 @@ void setup() {
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
   // square outputs: square-wave layer of the players; filter caps off
-  PORT->Group[PORTA].DIRCLR.reg = (1ul << 13) | (1ul << 14) | (1ul << 15) | (1ul << 16) | (1ul << 17) | (1ul << 18);
+  PORT->Group[PORTA].DIRCLR.reg = (1ul << 14) | (1ul << 15) | (1ul << 16) | (1ul << 17) | (1ul << 18);
+  // v1.44: square output 6 = ENVELOPE OUT: its filter capacitor on (PA13 low)
+  PORT->Group[PORTA].OUTCLR.reg = 1ul << 13;
+  PORT->Group[PORTA].DIRSET.reg = 1ul << 13;
   zt4.enable(true);
 }
 
@@ -664,7 +669,7 @@ void renderAudio() {
     if(hi[2]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 15; else PORT->Group[PORTB].OUTSET.reg = 1ul << 15;
     if(hi[3]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 14; else PORT->Group[PORTB].OUTSET.reg = 1ul << 14;
     if(hi[4]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 13; else PORT->Group[PORTB].OUTSET.reg = 1ul << 13;
-    if(hi[5]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 12; else PORT->Group[PORTB].OUTSET.reg = 1ul << 12;
+    // v1.44: square output 6 (PB12) is the ENVELOPE OUT -- see below
   }
 
   // Forward Button + Trigger to LED
@@ -703,6 +708,21 @@ void renderAudio() {
                      vj < SYNC_UNPATCHED ? (float)vj * vel_inv_top : 0.0f);
     }
     float out = stringsTick(strings, gate);
+
+    // v1.44 ENVELOPE OUT on square output 6 (PB12): an envelope follower of
+    // SAMPLE OUT (~3 ms attack, ~120 ms release), as a 1-bit sigma-delta
+    // stream; the output's own filter capacitor (PA13, switched on) smooths
+    // it into a CV: 0 = silence ... full = playing loud
+    {
+      static float envf = 0.0f, sd = 0.0f;
+      const float a = out < 0.0f ? -out : out;
+      envf += (a - envf) * (a > envf ? 0.0070f : 0.00017f);
+      float e = envf * 2.5f;                                // the usual playing level fills the range
+      e = e > 1.0f ? 1.0f : e;
+      sd += e;
+      if(sd >= 1.0f){ sd -= 1.0f; PORT->Group[PORTB].OUTCLR.reg = 1ul << 12; }   // outputs are inverted (as the squares)
+      else          {             PORT->Group[PORTB].OUTSET.reg = 1ul << 12; }
+    }
 
     // LED CLK: blinks on the beat the rhythm analysis found (also with
     // ostinato patterns), so you can see that the module has your tempo.
