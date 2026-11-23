@@ -621,8 +621,34 @@ int main() {
     }
   }
 
+  // v1.43: a model change while playing fades out, switches, fades in (no
+  // jump); heavy beats and phrase ends raise the DIV TRIG flag
+  {
+    stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.artic = ART_LEGATO; s.rootHz = 440.0f; stringsControl(s);
+    std::vector<float> o;
+    for (int n = 0; n < 40000; ++n) {
+      if (n == 20000) s.instrument = MDL_CELLO_SECTION;
+      if ((n & 127) == 0) stringsControl(s);
+      o.push_back(stringsTick(s, true));
+    }
+    float jump = 0; for (int n = 19000; n < 24000; ++n) jump = std::max(jump, std::fabs(o[n] - o[n - 1]));
+    float before = 0; for (int n = 15000; n < 19000; ++n) before = std::max(before, std::fabs(o[n] - o[n - 1]));
+    if (s.curModel != MDL_CELLO_SECTION || jump > 2.5f * before + 0.01f) { std::printf("FAIL soft model change (%.3f vs %.3f)\n", jump, before); ++fails; }
+    stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.rootHz = 440.0f; stringsControl(s);
+    int beats = 0, ends = 0;
+    const int L[3] = { 12000, 12000, 24000 }, G[3] = { 11000, 11000, 10000 };
+    for (int bar = 0; bar < 10; ++bar)
+      for (int j = 0; j < 3; ++j)
+        for (int n = 0; n < L[j]; ++n) {
+          if ((n & 127) == 0) stringsControl(s);
+          stringsTick(s, n < G[j]);
+          if (s.trigOut) { if (s.trigOut == 1) ++beats; else ++ends; s.trigOut = 0; }
+        }
+    if (beats < 3 || ends < 3) { std::printf("FAIL DIV TRIG flags (beats %d, phrase ends %d)\n", beats, ends); ++fails; }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM, triggers)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM, triggers, model fade, trigger out)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

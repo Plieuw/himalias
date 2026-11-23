@@ -59,6 +59,12 @@
 //  power-up = quantizer off (free / microtonal).
 //  Triggers (v1.42): a gate pulse shorter than 8 ms is a strike: the note is
 //  held for ~80 % of the expected note length, the stroke follows the tempo.
+//  DIV TRIG (v1.43): 5 ms on every heavy beat (down-bow), 25 ms at the end
+//  of a phrase. Gate LED: the note as played (held triggers too); short
+//  strokes only flash. Changing the model while playing fades over (~15 ms).
+//  1V/OCT calibration (v1.43): hold TRIGGER and switch A/B on at power-up,
+//  then 1 V + TRIGGER, 3 V + TRIGGER (CLK LED blinks slow / fast); saved
+//  in flash. Gate LED 1 s = saved, both LEDs flicker = out of range.
 //  Audio rate (v1.41): 1V/OCT and VELOCITY are read every sample (47.6 kHz,
 //  usable up to ~20 kHz; 1 of 8 samples extrapolated while a knob is read). An
 //  audio-rate signal on them (>= ~40 Hz, found automatically) modulates:
@@ -72,7 +78,7 @@
 //  Outputs and LEDs
 //   - noise side DAC out .......... divisi players only (players 2 ... 6) as strings
 //   - square outputs 1 ... 6 ...... every player's note as a square wave while it sounds
-//   - PA22 (digital noise out) .... 5 ms trigger when the divisi changes
+//   - PA22 (DIV TRIG) ............. 5 ms on heavy beats, 25 ms at phrase ends
 //   - LED CLK ..................... blinks on the detected beat
 //   - diagnose: hold TRIGGER while powering up -> divisi out = CPU load
 //                                   (0 ... +5 V = 0 ... 100 %), trigger out high
@@ -89,7 +95,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.42.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.43.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -317,6 +323,9 @@ const float reciprocal_sr = 1.0 / samplerate;
 
 
 
+static void calLoad();   // v1.43 1V/OCT calibration (below)
+static void calRun();
+
 void setup() {
   //put your setup code here, to run once:
 
@@ -370,6 +379,11 @@ void setup() {
   delay(20);                                  // let the pull-ups settle
   diag_mode = !(PORT->Group[PORTB].IN.reg & (1ul << 16));   // TRIGGER button held at power-up
   quant_on  =  (PORT->Group[PORTA].IN.reg & (1ul << 20));   // v1.42: A/B (mute) on at power-up = quantizer off
+  calLoad();                                              // v1.43: 1V/OCT calibration from flash
+  if(diag_mode && !quant_on){                             // TRIGGER held + A/B on: calibrate
+    calRun();
+    diag_mode = false; quant_on = true;
+  }
   
 
   // v1.40 (after the pinMode()s, which would take the pins off the ADC)
@@ -510,8 +524,7 @@ static void seqStep(uint16_t change_adc, bool scaleB) {
   stringsDivisi(strings, seq_reg);
   bool changed = strings.divisiMask != before;
   for(int i = 0; i < STR_VOICES; i++) if(tones[i] != strings.divisiTone[i]) changed = true;
-  if(changed && (strings.layout == LAY_DIVISI_MAJOR || strings.layout == LAY_DIVISI_MINOR))
-    seq_trig_ticks = SEQ_TRIG_TICKS;
+  (void)changed;   // v1.43: DIV TRIG now follows the phrasing (heavy beats / phrase ends)
 }
 
 // triangle wavefolder: keeps reflecting the signal back into -1 ... +1
@@ -552,6 +565,79 @@ static inline float cvVolts(uint16_t adc) {
   return ((float)adc - CV_ZERO_ADC) * (1.0f / CV_COUNTS_PER_VOLT);
 }
 
+//
+//  v1.43 1V/OCT calibration, kept in the last flash block (8 KB at 0xFE000)
+//  Start: hold TRIGGER and switch A/B on while powering up.
+//   1. CLK LED blinks slowly: patch exactly 1 V into 1V/OCT, press TRIGGER
+//   2. CLK LED blinks fast:   patch exactly 3 V, press TRIGGER
+//   gate LED on for 1 s = saved; both LEDs flicker = out of range, not saved
+//  Without a (valid) calibration the values from the schematic are used.
+//
+#define CAL_ADDR   0x000FE000u
+#define CAL_MAGIC  0x48535431u      // "HST1"
+struct CalData { uint32_t magic; float zero, cpv; uint32_t check; };
+float cal_zero = CV_ZERO_ADC, cal_cpv = CV_COUNTS_PER_VOLT;   // 1V/OCT jack only
+
+static uint32_t calCheck(const CalData &c){
+  uint32_t a, b; memcpy(&a, &c.zero, 4); memcpy(&b, &c.cpv, 4);
+  return c.magic ^ (a * 2654435761u) ^ (b * 40503u) ^ 0x5A5A1234u;
+}
+static void nvmWait(){ while(!NVMCTRL->STATUS.bit.READY); }
+static void nvmCmd(uint32_t cmd){ NVMCTRL->CTRLB.reg = NVMCTRL_CTRLB_CMDEX_KEY | cmd; nvmWait(); }
+static void calSave(const CalData &c){
+  __disable_irq();
+  nvmWait();
+  NVMCTRL->ADDR.reg = CAL_ADDR;
+  nvmCmd(NVMCTRL_CTRLB_CMD_EB);                          // erase the 8 KB block
+  NVMCTRL->CTRLA.bit.WMODE = NVMCTRL_CTRLA_WMODE_MAN;
+  nvmCmd(NVMCTRL_CTRLB_CMD_PBC);                         // clear the page buffer
+  const uint32_t *src = (const uint32_t *)&c;
+  volatile uint32_t *dst = (volatile uint32_t *)CAL_ADDR;
+  for(unsigned i = 0; i < sizeof(CalData) / 4; i++) dst[i] = src[i];
+  NVMCTRL->ADDR.reg = CAL_ADDR;
+  nvmCmd(NVMCTRL_CTRLB_CMD_WP);                          // write the page
+  CMCC->CTRL.bit.CEN = 0; while(CMCC->SR.bit.CSTS);      // drop stale cache lines
+  CMCC->MAINT0.bit.INVALL = 1; CMCC->CTRL.bit.CEN = 1;
+  __enable_irq();
+}
+static void calLoad(){
+  CalData c; memcpy(&c, (const void *)CAL_ADDR, sizeof c);
+  if(c.magic == CAL_MAGIC && c.check == calCheck(c) && c.cpv > 150.0f && c.cpv < 270.0f
+     && c.zero > 1700.0f && c.zero < 2350.0f){ cal_zero = c.zero; cal_cpv = c.cpv; }
+}
+static float calRead(){                                  // 1V/OCT, mean of 256 readings
+  float a = 0.0f;
+  for(int i = 0; i < 256; i++){ a += adc51.readAnalog(PB06, ADC_Channel8, true); delayMicroseconds(200); }
+  return a * (1.0f / 256.0f);
+}
+static bool calWaitPress(uint32_t blink_ms){             // blink the CLK LED until TRIGGER is pressed
+  while(!(PORT->Group[PORTB].IN.reg & (1ul << 16))) delay(5);   // released first
+  uint32_t t0 = millis();
+  while(PORT->Group[PORTB].IN.reg & (1ul << 16)){
+    if(((millis() - t0) / blink_ms) & 1) PORT->Group[PORTB].OUTSET.reg = 1ul << 0;
+    else                                 PORT->Group[PORTB].OUTCLR.reg = 1ul << 0;
+    delay(2);
+  }
+  PORT->Group[PORTB].OUTCLR.reg = 1ul << 0;
+  delay(300);                                            // let the hand go
+  return true;
+}
+static void calRun(){
+  calWaitPress(500); const float r1 = calRead();
+  calWaitPress(120); const float r3 = calRead();
+  CalData c; c.magic = CAL_MAGIC; c.cpv = (r3 - r1) * 0.5f; c.zero = r1 - c.cpv; c.check = calCheck(c);
+  if(c.cpv > 150.0f && c.cpv < 270.0f && c.zero > 1700.0f && c.zero < 2350.0f){
+    calSave(c); cal_zero = c.zero; cal_cpv = c.cpv;
+    PORT->Group[PORTB].OUTSET.reg = 1ul << 31; delay(1000); PORT->Group[PORTB].OUTCLR.reg = 1ul << 31;
+  } else {
+    for(int i = 0; i < 20; i++){ PORT->Group[PORTB].OUTTGL.reg = (1ul << 31) | (1ul << 0); delay(100); }
+    PORT->Group[PORTB].OUTCLR.reg = (1ul << 31) | (1ul << 0);
+  }
+}
+static inline float pitchVolts(uint16_t adc){            // the 1V/OCT jack, calibrated
+  return ((float)adc - cal_zero) * (1.0f / cal_cpv);
+}
+
 void renderAudio() {
   const uint32_t isr_c0 = DWT->CYCCNT;
   adc51.isrPoll();                                         // v1.40: audio-rate VELOCITY + 1V/OCT
@@ -585,10 +671,8 @@ void renderAudio() {
   static bool     previous_trigger = false;
   if (  (PORT->Group[PORTB].IN.reg & (1ul << 16))  &&      // Trigger from Button
         (PORT->Group[PORTB].IN.reg & (1ul << 23))     ) {  // Trigger from jack
-    PORT->Group[PORTB].OUTCLR.reg = 1ul << 31;             // trigger fire!
     previous_trigger=false;
   } else {
-    PORT->Group[PORTB].OUTSET.reg = 1ul << 31;
     if(!previous_trigger){          // check for edge
       seq_steps_pending++;  // clock the squares sequencer
       trig_edges++;         // v1.34.2: the GATE input is in use
@@ -599,6 +683,14 @@ void renderAudio() {
 
 
   strings.tremolo = !(PORT->Group[PORTB].IN.reg & (1ul << 17));   // BIT switch: tremolo
+  // v1.43 gate LED: the note as the player plays it (held triggers too);
+  // short strokes (staccato, spiccato, pizzicato, col legno) only flash
+  {
+    const uint8_t a = strings.articEff;
+    const bool shortStroke = a == ART_STACCATO || a == ART_SPICCATO || a == ART_PIZZICATO || a == ART_COL_LEGNO;
+    const bool on = strings.gatePrev && (!shortStroke || strings.sinceGate < (uint32_t)(0.06f * samplerate));
+    if(on) PORT->Group[PORTB].OUTSET.reg = 1ul << 31; else PORT->Group[PORTB].OUTCLR.reg = 1ul << 31;
+  }
   const bool gate = previous_trigger || strings_cv_bow;
 
   {
@@ -607,7 +699,7 @@ void renderAudio() {
     // active while an audio-rate signal is there (slow CV is untouched)
     {
       const uint16_t pj = adc51.fast1, vj = adc51.fast0;
-      stringsFmInput(strings, pj < CV_UNPATCHED ? cvVolts(pj) : 0.0f,
+      stringsFmInput(strings, pj < CV_UNPATCHED ? pitchVolts(pj) : 0.0f,
                      vj < SYNC_UNPATCHED ? (float)vj * vel_inv_top : 0.0f);
     }
     float out = stringsTick(strings, gate);
@@ -648,7 +740,12 @@ void renderAudio() {
       DAC->DATA[0].reg = (uint16_t)d2;          // noise side DAC out: divisi players only
     }
 
-    // trigger out (PA22, former digital noise out): 5 ms when the divisi changes
+    // trigger out (PA22, DIV TRIG jack), v1.43: follows the phrasing --
+    // 5 ms on every heavy beat (a down-bow), 25 ms when a phrase ends
+    if(strings.trigOut){
+      seq_trig_ticks = strings.trigOut == 2 ? (uint32_t)(0.025f * samplerate) : (uint32_t)(0.005f * samplerate);
+      strings.trigOut = 0;
+    }
     if(diag_mode){
       // diagnose mode: high while the CPU guard runs fewer than 6 players
       if(strings.maxVoices < STR_VOICES) PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
@@ -664,7 +761,8 @@ void renderAudio() {
 
   const uint32_t isr_dt = DWT->CYCCNT - isr_c0;
   if(isr_dt > isr_cycles_max) isr_cycles_max = isr_dt;
-  // CPU guard: close to the time per sample -> drop a player (min 3);
+  // CPU guard: close to the time per sample -> drop a player (min 2; a
+  // Cortex-M4 run of the engine showed sections need more than the budget);
   // after ~2 s with room to spare, bring one back
   {
     static uint32_t calm = 0;
@@ -672,12 +770,19 @@ void renderAudio() {
     const uint32_t load = isr_dt;
     const float l = (float)isr_dt / (float)budget;            // for the diagnose output
     diag_load = l > diag_load ? l : diag_load * 0.99996f;
+    // v1.43: react to sustained load, not to the single busy tick of a new
+    // note (phrase analysis runs then): > 3 hot ticks within ~32 ticks
+    static uint16_t hot = 0;
     if(load > budget * 9 / 10){
-      if(strings.maxVoices > 3) strings.maxVoices--;
+      hot += 32;
+      if(hot > 96){ if(strings.maxVoices > 2) strings.maxVoices--; hot = 0; }
       calm = 0;
-    } else if(load < budget * 7 / 10){
-      if(++calm > 95000 && strings.maxVoices < STR_VOICES){ strings.maxVoices++; calm = 0; }
-    } else calm = 0;
+    } else {
+      if(hot) hot--;
+      if(load < budget * 7 / 10){
+        if(++calm > 95000 && strings.maxVoices < STR_VOICES){ strings.maxVoices++; calm = 0; }
+      } else calm = 0;
+    }
   }
 }
 
@@ -774,7 +879,7 @@ void loop() {
   stringsPitchRange(strings.v[0].family, PITCH_LOW_HZ, PITCH_OCTAVES);
   float pitch_oct = (float)sample_pitch_poti * (PITCH_OCTAVES / 4095.0f);
   if(sample_pitch_jack < CV_UNPATCHED)                   // with audio-rate FM: only its slow part
-    pitch_oct += strings.fmP.on ? strings.fmP.lp : cvVolts(sample_pitch_jack);
+    pitch_oct += strings.fmP.on ? strings.fmP.lp : pitchVolts(sample_pitch_jack);
   float hz = PITCH_LOW_HZ * exp2f(pitch_oct);
   // v1.42 quantizer, the way a player finds the note: while the pitch moves
   // (a slide, a slewed CV, turning the knob) it follows freely; once it has

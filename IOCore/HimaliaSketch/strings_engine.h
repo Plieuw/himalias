@@ -437,6 +437,12 @@ struct StringsEngine {
   // the note is held for ~80 % of the expected note length
   uint32_t rawOn, trigHold;       // raw gate start, hold until (0 = no hold)
   bool     rawPrev, trigGap;      // raw gate last sample, one-sample gap to retrigger
+  // v1.43 soft model change: the output fades out (~5 ms), the new model is
+  // switched in, then it fades back in (~10 ms)
+  uint8_t curModel;               // the model in use
+  float   xf, xfTarget;           // output fade
+  // v1.43 trigger out (DIV TRIG jack): set by the engine, cleared by the firmware
+  uint8_t trigOut;                // 1 = heavy beat (short pulse), 2 = phrase end (long pulse)
   float noteAhead;                // v1.34: this note's expected length (rhythm pattern look-ahead)
   bool  articLocked;              // v1.34: ARTIC CV patched -> no gate-length articulation
   // tempo from the gates: vibrato and tremolo lock to it
@@ -664,6 +670,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.fmP.lp = s.fmB.lp = 0.0f; s.fmP.g = s.fmB.g = 0.0f; s.fmP.hys = 0.02f; s.fmB.hys = 0.01f;
   s.fmP.n = s.fmB.n = s.fmP.cross = s.fmB.cross = s.fmP.quiet = s.fmB.quiet = 0;
   s.fmP.pos = s.fmB.pos = s.fmP.on = s.fmB.on = false; s.fmRatio = 1.0f; s.fmBow = 1.0f; s.fmPress = 1.0f; s.fmPos = 1.0f;
+  s.curModel = 0; s.xf = s.xfTarget = 1.0f; s.trigOut = 0;
   s.rawOn = 0; s.trigHold = 0; s.rawPrev = false; s.trigGap = false;
   s.noteAhead = 0.6f; s.articLocked = false; s.arcMul = s.attackChr = s.beatW = 1.0f; s.beatAnchor = 0; s.barPulses = 0;
   for (int i = 0; i < STR_ONSETS; i++) s.onG[i] = 0;
@@ -890,7 +897,14 @@ static inline uint8_t strArticResolve(const StringsEngine &s) {
 
 static inline void stringsControl(StringsEngine &s) {
   stringsTempo(s);
-  const StrModelDef &M = STR_MODELS[s.instrument < MDL_COUNT ? s.instrument : 0];
+  {
+    const uint8_t want = s.instrument < MDL_COUNT ? s.instrument : 0;
+    bool quiet = true;
+    for (int i = 0; i < STR_VOICES; i++) if (s.v[i].active && s.v[i].env > 0.002f) quiet = false;
+    if (want != s.curModel && (quiet || s.xf < 0.01f)) s.curModel = want;   // switch while faded / silent
+    s.xfTarget = want == s.curModel ? 1.0f : 0.0f;
+  }
+  const StrModelDef &M = STR_MODELS[s.curModel];
   const uint8_t ins = M.ins;
   const uint8_t lay = M.layout >= 0 ? (uint8_t)M.layout : (s.layout < LAY_COUNT ? s.layout : 0);
   const bool solo = (ins == INS_SOLO_VIOLIN || ins == INS_SOLO_VIOLA || ins == INS_SOLO_CELLO);
@@ -1397,8 +1411,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     for (int i = 0; i < STR_VOICES; i++)
       s.v[i].tremPh = 0.25f + 0.01f * (float)i;
     strBrainNote(s);                                         // HAESE: how to play this note
+    if (s.brain.downBow && s.trigOut != 2) s.trigOut = 1;     // v1.43: heavy beat -> DIV TRIG
   }
-  if (!gate && s.gatePrev) { s.brain.offNow = s.now; s.brain.haveOff = true; }
+  if (!gate && s.gatePrev) { s.brain.offNow = s.now; s.brain.haveOff = true; if (s.brain.phraseEnd) s.trigOut = 2; }
   if (gate && s.sinceGate == (uint32_t)(0.006f * STR_SR)) strBrainVel(s);   // v1.36
   // the dynamic gate may still be rising at the edge: keep the peak of the first 10 ms
   if (s.sinceGate < (uint32_t)(0.01f * STR_SR) && s.onN) {
@@ -1777,8 +1792,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   const float air = s.air * (s.mute ? 0.25f : 1.0f);
   lead += strAirHp(s.airF, 0, leadBus) * air;
   div  += strAirHp(s.airF, 1, divIn) * air;
-  lead *= s.level;
-  div  *= s.level;
+  s.xf += (s.xfTarget - s.xf) * (s.xfTarget < s.xf ? 0.0042f : 0.0021f);   // ~5 ms out, ~10 ms in
+  lead *= s.level * s.xf;
+  div  *= s.level * s.xf;
 
   // divisi-only output (second DAC): DC blocking and fixed output calibration.
   // No limiter or automatic gain control: bow dynamics and transients pass through.
