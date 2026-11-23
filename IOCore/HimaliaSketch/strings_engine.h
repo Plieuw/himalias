@@ -40,7 +40,13 @@
 #define STR_VEL_LEV(x) (0.11f + 0.89f * strClampV(x))
 #define STR_VEL_ACC(x) (0.10f + 0.90f * strClampV(x) * strClampV(x) + 0.0001f)
 #define STR_HIST 1024          // v1.47: a player's recent sound (21 ms) for the doublers
-#define STR_BLK 4            // v1.47: slow per-player maths every 4 samples
+#define STR_BLK 4            // v1.47: slow per-player maths every 4 steps
+// v1.48: 1 - (1 - k)^(STR_BLK * h): a per-sample smoothing coefficient over
+// one block of h-sample steps
+static inline float strKn(float k, int h) {
+  const float a = 1.0f - k, a2 = a * a, a4 = a2 * a2;
+  return 1.0f - (h == 2 ? a4 * a4 : a4);
+}
 #define STR_SLIDE_MAX 12.0f  // v1.35: longest slide on one string (semitones)
 #define STR_VEL_WIN 0.025f  // v1.34.1: velocity = peak of the first 25 ms of a note
 #define STR_ONSETS 33       // gate starts kept for the rhythm analysis (32 intervals)
@@ -166,26 +172,26 @@ struct StrModelDef {
 static const StrModelDef STR_MODELS[MDL_COUNT] = {
   //  base               art layout trem vibD   vibR   swell accent tight  ring  gain    character
   { INS_SOLO_VIOLIN,     -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 0.850f, CHR_CLASSICAL },  // solo violin, classical
-  { INS_SOLO_VIOLIN,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.098f, CHR_ROMANTIC },  // solo violin, romantic
+  { INS_SOLO_VIOLIN,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.097f, CHR_ROMANTIC },  // solo violin, romantic
   { INS_SOLO_VIOLIN,     -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.083f, CHR_FILM },  // solo violin, film
-  { INS_SOLO_CELLO,      -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.123f, CHR_CLASSICAL },  // solo cello, classical
-  { INS_SOLO_CELLO,      -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.340f, CHR_ROMANTIC },  // solo cello, romantic
+  { INS_SOLO_CELLO,      -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.122f, CHR_CLASSICAL },  // solo cello, classical
+  { INS_SOLO_CELLO,      -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.530f, CHR_ROMANTIC },  // solo cello, romantic
   { INS_SOLO_CELLO,      -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.277f, CHR_FILM },  // solo cello, film
-  { INS_VIOLIN_SECTION,  -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 0.950f, CHR_CLASSICAL },  // violin section, classical
-  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.191f, CHR_ROMANTIC },  // violin section, romantic
-  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.330f, CHR_FILM },  // violin section, film
-  { INS_VIOLA_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 0.940f, CHR_CLASSICAL },  // viola section, classical
-  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.151f, CHR_ROMANTIC },  // viola section, romantic
-  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.352f, CHR_FILM },  // viola section, film
-  { INS_CELLO_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.644f, CHR_CLASSICAL },  // cello section, classical
-  { INS_CELLO_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 2.124f, CHR_ROMANTIC },  // cello section, romantic
-  { INS_CELLO_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.953f, CHR_FILM },  // cello section, film
-  { INS_LOW_STRINGS,     -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.328f, CHR_CLASSICAL },  // celli + basses, classical
-  { INS_LOW_STRINGS,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.951f, CHR_ROMANTIC },  // celli + basses, romantic
-  { INS_LOW_STRINGS,     -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.767f, CHR_FILM },  // celli + basses, film
-  { INS_FULL_STRINGS,    -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.228f, CHR_CLASSICAL },  // full strings, classical
-  { INS_FULL_STRINGS,    -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.731f, CHR_ROMANTIC },  // full strings, romantic
-  { INS_FULL_STRINGS,    -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.767f, CHR_FILM },  // full strings, film
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.019f, CHR_CLASSICAL },  // violin section, classical
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.202f, CHR_ROMANTIC },  // violin section, romantic
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.180f, CHR_FILM },  // violin section, film
+  { INS_VIOLA_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.047f, CHR_CLASSICAL },  // viola section, classical
+  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.374f, CHR_ROMANTIC },  // viola section, romantic
+  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.246f, CHR_FILM },  // viola section, film
+  { INS_CELLO_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.547f, CHR_CLASSICAL },  // cello section, classical
+  { INS_CELLO_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 2.176f, CHR_ROMANTIC },  // cello section, romantic
+  { INS_CELLO_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 2.176f, CHR_FILM },  // cello section, film
+  { INS_LOW_STRINGS,     -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.540f, CHR_CLASSICAL },  // celli + basses, classical
+  { INS_LOW_STRINGS,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.977f, CHR_ROMANTIC },  // celli + basses, romantic
+  { INS_LOW_STRINGS,     -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.848f, CHR_FILM },  // celli + basses, film
+  { INS_FULL_STRINGS,    -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.460f, CHR_CLASSICAL },  // full strings, classical
+  { INS_FULL_STRINGS,    -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.937f, CHR_ROMANTIC },  // full strings, romantic
+  { INS_FULL_STRINGS,    -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.705f, CHR_FILM },  // full strings, film
 };
 
 // noise transient per articulation: bow scratch at the start of a stroke,
@@ -251,6 +257,9 @@ struct StrVoice {
   float dDel, dDelT, dMod, dblG, hum;  // delay (samples), its target, drift, fade, level
   // v1.47 block processing (every STR_BLK samples) and the per-sample ramps
   uint8_t blk; bool bowingB, restingB;
+  float outCur, outPrev, o2, o3;  // v1.48: last step outputs (half-rate players are interpolated)
+  float outHold;                  // ... the sample sent between two steps
+  float eqPrev;                   // ... high shelf state
   float Lcur, dL, bvCur, dBv, slB, betaB, rollB, liftB;
   float dynC, tiltC, vibC, bvC;   // v1.46: per-sample constants, refreshed when they change
   float slBase;                   // v1.39: friction slope without the accent (control rate)
@@ -412,6 +421,7 @@ struct StringsEngine {
   // players' places inside their section (side signal per family)
   float famPan[STR_FAMILIES], leadPan;
   float sideLp[STR_FAMILIES];
+  float pkX1[STR_FAMILIES], pkX2[STR_FAMILIES], pkY1[STR_FAMILIES], pkY2[STR_FAMILIES];   // v1.48 presence peak
   float dc2x, dc2y;
   float bodyDirect[STR_FAMILIES];
   StrAir airF;
@@ -471,6 +481,7 @@ struct StringsEngine {
   float   xf, xfTarget;           // output fade
   // v1.43 trigger out (DIV TRIG jack): set by the engine, cleared by the firmware
   uint8_t trigOut;                // 1 = heavy beat (short pulse), 2 = phrase end (long pulse)
+  float halfCorr;                 // v1.48: half-rate loop delay correction (steps)
   float noteAhead;                // v1.34: this note's expected length (rhythm pattern look-ahead)
   bool  articLocked;              // v1.34: ARTIC CV patched -> no gate-length articulation
   // tempo from the gates: vibrato and tremolo lock to it
@@ -690,6 +701,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.vibGrowK = 1.0f / (1.4f * STR_SR); v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f; v.slBase = 1.0f; v.panOff = 0.0f; v.dynC = v.tiltC = v.vibC = v.bvC = 0.0f;
     for (int k = 0; k < STR_HIST; k++) v.hist[k] = 0.0f;
     v.hw = 0; v.dbl = false; v.dblSrc = 0; v.semisNow = 0; v.dDel = v.dDelT = 400.0f; v.dMod = 0.0f; v.dblG = 0.0f; v.hum = 1.0f;
+    v.outCur = v.outPrev = v.o2 = v.o3 = v.outHold = v.eqPrev = 0.0f;
     v.blk = 0; v.bowingB = v.restingB = false; v.Lcur = v.len; v.dL = 0.0f; v.bvCur = v.dBv = 0.0f; v.slB = 1.0f; v.betaB = 0.1f; v.rollB = 0.0f; v.liftB = 1.0f;
     v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
@@ -702,7 +714,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.pizz = false; s.vibrato = true; s.tremolo = false; s.mute = false; s.artic = ART_LEGATO;
   for (int f = 0; f < STR_FAMILIES; f++) { s.famLp[f] = 0; s.famLpLead[f] = 0; s.famLpK[f] = 0.5f; }
   s.outDivisi = 0; s.dc2x = s.dc2y = 0;
-  for (int f = 0; f < STR_FAMILIES; f++) { s.famPan[f] = 0.0f; s.sideLp[f] = 0.0f; }
+  for (int f = 0; f < STR_FAMILIES; f++) { s.famPan[f] = 0.0f; s.sideLp[f] = 0.0f; s.pkX1[f] = s.pkX2[f] = s.pkY1[f] = s.pkY2[f] = 0.0f; }
   s.leadPan = 0.0f;
   for (int k = 0; k < 2; k++) { for (int n = 0; n < STR_LIM_LOOK; n++) s.lim[k].d[n] = 0.0f; s.lim[k].pk = 0.0f; s.lim[k].g = 1.0f; s.lim[k].w = 0; s.lim[k].hold = 0; }
   {
@@ -723,7 +735,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.fmP.pos = s.fmB.pos = s.fmP.on = s.fmB.on = false; s.fmRatio = 1.0f; s.fmBow = 1.0f; s.fmPress = 1.0f; s.fmPos = 1.0f;
   s.curModel = 0; s.xf = s.xfTarget = 1.0f; s.trigOut = 0;
   s.rawOn = 0; s.trigHold = 0; s.rawPrev = false; s.trigGap = false;
-  s.noteAhead = 0.6f; s.articLocked = false; s.arcMul = s.attackChr = s.beatW = 1.0f; s.beatAnchor = 0; s.barPulses = 0;
+  s.noteAhead = 0.6f; s.articLocked = false; s.halfCorr = 0.0f; s.arcMul = s.attackChr = s.beatW = 1.0f; s.beatAnchor = 0; s.barPulses = 0;
   for (int i = 0; i < STR_ONSETS; i++) s.onG[i] = 0;
   s.pulse = 0; s.patLen = 0; s.patPulses = 0; s.beatCand = 0;
   strHumanizeInit(s); s.vibHz = 0; s.tremHz = 6.5f;
@@ -1025,6 +1037,12 @@ static inline void stringsControl(StringsEngine &s) {
   const float b = strClamp(s.beta, 0.03f, 0.30f);
   s.bridgeK = (A.mode == MODE_PLUCK ? 0.55f : (A.mode == MODE_STRIKE ? 0.75f : 0.90f)) - 1.9f * (b - 0.04f);
   if (s.bridgeK > 0.95f) s.bridgeK = 0.95f;
+  {
+    // v1.48: half-rate strings -- the bridge lowpass delays the loop by a
+    // different amount; correct the length so the pitch stays exact
+    const float k = s.bridgeK < 0.05f ? 0.05f : s.bridgeK, k2 = 1.0f - (1.0f - k) * (1.0f - k);
+    s.halfCorr = 0.5f * (1.0f - k) / k - (1.0f - k2) / k2;   // in half-rate steps
+  }
   // rosin noise: more with pressure and close to the bridge
   s.bowNoise = 0.015f + 0.025f * press + 0.25f * (0.12f - strClamp(b, 0.03f, 0.12f));
   // top end per family, con sordino (mute) takes off more
@@ -1565,9 +1583,23 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     StrVoice &v = s.v[i];
     if (!v.active) continue;
 
+    // v1.48: in an ensemble every player's string runs at half the sample
+    // rate (23.8 kHz, harmonics up to ~12 kHz; the players take turns, so
+    // the load is even) and is interpolated back; the bodies, the
+    // resonance and the air stay at the full rate. A soloist runs at full rate.
+    const int h = solo ? 1 : 2;
+    if (h == 2 && ((s.now + (uint32_t)i) & 1u)) {
+      const float played = v.outHold;                        // between two steps (see below)
+      v.hist[v.hw] = played;
+      v.hw = (uint16_t)((v.hw + 1) & (STR_HIST - 1));
+      if (i == 0) leadBus = played;
+      else      { famBus[v.family] += played; sideBus[v.family] += played * v.panOff; }
+      continue;
+    }
+
     // this player's gate (after the onset delay)
     bool edge = false;                                       // v1.46: refresh the constants after it
-    if (v.onset) v.onset--;
+    if (v.onset) v.onset = v.onset > (uint32_t)h ? v.onset - (uint32_t)h : 0;
     else if (v.gate != gate) {
       v.gate = gate; edge = true;
       if (!gate) {
@@ -1668,7 +1700,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     }
     if (edge) { strVoiceConst(s, v); v.blk = 0; }
     if (v.velWin) {                                          // catch the velocity peak
-      v.velWin--;
+      v.velWin = v.velWin > h ? (uint16_t)(v.velWin - h) : 0;
       const float vn = strClamp(s.velocity, 0.0f, 1.3f);
       if (vn > v.vel) { v.accent *= STR_VEL_ACC(vn) / STR_VEL_ACC(v.vel); v.vel = vn; strVoiceConst(s, v); }
     }
@@ -1680,9 +1712,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     //      itself (delay lines, friction, noise) still runs every sample.
     if (v.blk == 0) {
       v.blk = STR_BLK;
-      const float n4 = (float)STR_BLK;
-      #define STR_K4(k) (1.0f - (1.0f - (k)) * (1.0f - (k)) * (1.0f - (k)) * (1.0f - (k)))
-      v.strokeN += STR_BLK;
+      const int nS = STR_BLK * h;                            // samples in this block
+      const float n4 = (float)nS;
+      #define STR_K4(k) strKn((k), h)
+      v.strokeN += nS;
       // finger travel (speed from stringsControl)
       v.len += (v.lenTarget - v.len) * STR_K4(v.glideK);
       // bow envelope: attack per articulation, release ~60 ms; staccato and
@@ -1698,7 +1731,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       v.bowingB = bowing;
       if (!v.gate) {
         const uint32_t before = v.relN;
-        if (v.relN < 0xFFFFFFF0u) v.relN += STR_BLK;
+        if (v.relN < 0xFFFFFFF0u) v.relN += nS;
         // the finger lifts after ~0.18 s of release: the open string rings on
         const uint32_t at = (uint32_t)(0.18f * STR_SR);
         if (!v.fingerOff && !v.relStop && A.mode == MODE_BOW && before < at && v.relN >= at
@@ -1709,14 +1742,14 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         }
       }
       v.restingB = !v.gate && v.relStop && v.relN < (uint32_t)(0.5f * STR_SR);
-      { const float d = A.accentDecay, d2 = d * d; v.accent *= d2 * d2; }
+      { const float d = A.accentDecay, d2 = d * d, d4 = d2 * d2; v.accent *= h == 2 ? d4 * d4 : d4; }
       v.pe += (v.peT - v.pe) * (0.0003f * n4);              // phrase energy glides (~70 ms)
       if (v.gate && v.vibGrow < 1.0f) v.vibGrow += v.vibGrowK * n4;   // vibrato develops over the note
       v.swell += (1.0f - v.swell) * STR_K4(v.swK);
       v.fingerLen = v.len;
       // vibrato: starts after a straight tone, then warms up; every cycle a
       // slightly different rate and width (a human hand)
-      if (v.vibDelay) v.vibDelay = v.vibDelay > STR_BLK ? v.vibDelay - STR_BLK : 0;
+      if (v.vibDelay) v.vibDelay = v.vibDelay > (uint32_t)nS ? v.vibDelay - nS : 0;
       else v.vibWarm += (1.0f - v.vibWarm) * (0.00004f * n4);
       if (v.vs >= 0.0f && v.vibPrevS < 0.0f) {
         v.jitRT = 1.0f + 0.04f * strRand(s);
@@ -1736,7 +1769,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       v.rollB = vibRel * (v.vc < 0 ? -v.vc : v.vc);
       // the string length at the end of this block: ramp towards it
       const float Lend = v.len * (1.0f + v.vibAmt * vibShape);
-      v.dL = (Lend - v.Lcur) * (1.0f / n4);
+      v.dL = (Lend - v.Lcur) * (1.0f / STR_BLK);           // per step
       v.betaB = s.beta * (0.8f + 0.2f * v.bowMul);
       // bow speed at the end of this block
       float bvEnd = 0.0f;
@@ -1754,7 +1787,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           const uint32_t T = (uint32_t)(0.09f * STR_SR), half = T / 2;
           const float x = (float)v.turn / (float)T;                     // 1 -> 0
           bvEnd *= 0.3f + 0.7f * fabsf(cosf(3.14159265f * x));          // slow down, turn, speed up
-          const uint32_t nt = v.turn > STR_BLK ? v.turn - STR_BLK : 0;
+          const uint32_t nt = v.turn > (uint32_t)nS ? v.turn - nS : 0;
           if (v.turn > half && nt <= half) { v.dir = -v.dir; v.tran += 0.012f * (0.45f + 0.55f * strClamp(v.vel, 0.0f, 1.0f)); }
           v.turn = nt;
         }
@@ -1771,7 +1804,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         }
         bvEnd *= 1.0f + 0.04f * vibRel * v.vc;              // the bow arm moves with the hand
       }
-      v.dBv = (bvEnd - v.bvCur) * (1.0f / n4);
+      v.dBv = (bvEnd - v.bvCur) * (1.0f / STR_BLK);       // per step
       // bow force for the friction (the accent bites in with extra pressure)
       const float bowPressure = (v.dir > 0.0f) ? 0.998f : 1.002f;
       v.slB = (v.slBase - 2.5f * v.accent * A.bite) * bowPressure;
@@ -1782,7 +1815,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     v.Lcur += v.dL;
     v.bvCur += v.dBv;
 
-    float L = v.Lcur / s.fmRatio;                            // v1.40: pitch FM (audio rate)
+    float L = h == 2 ? v.Lcur / (s.fmRatio * 2.0f) + s.halfCorr : v.Lcur / s.fmRatio;   // v1.40 pitch FM; v1.48 in steps
     if (L > (float)(STR_NECK_LEN - 8)) L = (float)(STR_NECK_LEN - 8);
     if (L < 8.0f) L = 8.0f;
 
@@ -1796,7 +1829,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     const float neckOut   = strRead(v.neck,   STR_NECK_LEN - 1,   v.nw, ln);
 
     // bridge reflection with a gentle lowpass (string losses)
-    v.lp += (bridgeOut - v.lp) * s.bridgeK;
+    v.lp += (bridgeOut - v.lp) * (h == 2 ? 1.0f - (1.0f - s.bridgeK) * (1.0f - s.bridgeK) : s.bridgeK);
     float loss = (v.env > 0.02f) ? s.loss : v.ringLoss;
     if (!v.gate && v.relStop && v.ringLoss > 0.8f) loss = (v.env > 0.3f) ? s.loss : 0.8f;   // bow resting on the string
     const float bridgeRefl = -v.lp * loss;
@@ -1806,7 +1839,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     float newVel = 0.0f;
     if (v.bowingB || v.env > 0.001f || v.restingB) {
       const float bv = v.bvCur * s.fmBow;                    // v1.40: bow FM (audio rate)
-      const float nz = strNoise(v.nrng);
+      const float nz = strNoise(v.nrng) * (h == 2 ? 0.7071f : 1.0f);   // the same noise density at half rate
       // the noise comes with the slip: when the string slides under the
       // hair (once per period), not as constant hiss
       const float dv = bv - stringVel + nz * s.bowNoise * (0.35f + 1.6f * v.slip) * (1.0f + 2.5f * v.rollB) * (bv < 0 ? -bv : bv);
@@ -1818,13 +1851,13 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       float f = 1.0f / t;
       if (f > 1.0f) f = 1.0f;
       newVel = dv * f * v.liftB;                             // lifting off
-      v.slip += ((1.0f - f) - v.slip) * 0.5f;
+      v.slip += ((1.0f - f) - v.slip) * (h == 2 ? 0.75f : 0.5f);
     }
     if (v.pluck) {                                           // pizzicato / col legno pulse
       if (v.pluckN < v.pluckLen) {
         const float x = (float)v.pluckN / (float)v.pluckLen;
         newVel += v.pluckAmp * (0.3f + 0.7f * v.vel) * (1.0f - x) * (x < 0.15f ? x / 0.15f : 1.0f);
-        v.pluckN++;
+        v.pluckN += (uint32_t)h;
       } else v.pluck = false;
     }
 
@@ -1833,8 +1866,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     if (v.tran > 0.002f) {
       const float nz = strNoise(v.nrng);
       tr = nz * v.tran * s.transient;
-      v.tran *= (A.mode == MODE_STRIKE) ? 0.990f : 0.9982f;  // wood click shorter
-      newVel += tr * 0.025f;
+      const float td = (A.mode == MODE_STRIKE) ? 0.990f : 0.9982f;   // wood click shorter
+      v.tran *= h == 2 ? td * td : td;
+      newVel += tr * (h == 2 ? 0.0354f : 0.025f);            // the same energy at half rate
     }
     v.neck[v.nw]   = bridgeRefl + newVel;
     v.bridge[v.bw] = nutRefl + newVel;
@@ -1843,8 +1877,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
 
     // radiated transient: highpassed so it is a scratch, not a thump
     // radiated scratch: band-passed (~1.5 ... 6 kHz) like hair on rosin, not hiss
-    v.tranHp += (tr - v.tranHp) * 0.55f;                    // lowpass ~6 kHz
-    v.tBp1 += (v.tranHp - v.tBp1) * 0.18f;                  // minus lowpass ~1.5 kHz
+    v.tranHp += (tr - v.tranHp) * (h == 2 ? 0.7975f : 0.55f);   // lowpass ~6 kHz
+    v.tBp1 += (v.tranHp - v.tBp1) * (h == 2 ? 0.3276f : 0.18f); // minus lowpass ~1.5 kHz
     const float trHp = v.tranHp - v.tBp1;
     // louder notes sound brighter: tilt the radiated sound with the velocity
     const float tilt = v.tiltC;                             // fast bow a bit brighter
@@ -1854,7 +1888,19 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // note; a player also uses force and contact point, so the note level
     // follows the dynamic gate too (1 = no dynamic gate = unchanged)
     const float dyn = v.dynC;
-    const float played = radiated * dyn;
+    float played = radiated * dyn;
+    if (h == 2) {
+      // the half-rate string is a little darker and fuller than at full
+      // rate (measured against v1.47): a gentle high shelf brings the
+      // 1 ... 12 kHz back (+1 dB at 2 kHz, +5 dB at 10 kHz)
+      const float eq = (played + 0.55f * (played - v.eqPrev)) * 0.84f;
+      v.eqPrev = played; played = eq;
+      // 4-point (cubic) midpoint interpolation, 1.5 steps late: flat up to
+      // ~10 kHz and far fewer images above than a straight line
+      v.o3 = v.o2; v.o2 = v.outPrev; v.outPrev = v.outCur; v.outCur = played;
+      played = (9.0f * (v.o2 + v.outPrev) - v.o3 - v.outCur) * (1.0f / 16.0f);   // between o2 and outPrev
+      v.outHold = v.outPrev;                                // the next sample: the step value itself
+    }
     v.hist[v.hw] = played;                                  // v1.47: for a doubler of this player
     v.hw = (uint16_t)((v.hw + 1) & (STR_HIST - 1));
     if (i == 0) leadBus = played;                            // force on the bridge
@@ -1910,7 +1956,15 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   float div = 0.0f, divIn = 0.0f, divL = 0.0f, divR = 0.0f, airL = 0.0f, airR = 0.0f;
   for (int f = 0; f < STR_FAMILIES; f++) {
     StrMode *m = s.body[f];
-    const float x = famBus[f];
+    float x = famBus[f];
+    if (!solo) {
+      // v1.48: the half-rate strings lose a little presence around 2 kHz:
+      // a peak (+4 dB at 2.2 kHz, Q 0.8) per section gives it back
+      static const float b0 = 1.0728f, b1 = -1.6779f, b2 = 0.6784f, a1 = -1.6779f, a2 = 0.7512f;
+      const float y = b0 * x + b1 * s.pkX1[f] + b2 * s.pkX2[f] - a1 * s.pkY1[f] - a2 * s.pkY2[f];
+      s.pkX2[f] = s.pkX1[f]; s.pkX1[f] = x; s.pkY2[f] = s.pkY1[f]; s.pkY1[f] = y;
+      x = y;
+    }
     divIn += x;
     // skip bodies nobody plays on, once they have rung out
     if (!((s.famUsed >> f) & 1)) {

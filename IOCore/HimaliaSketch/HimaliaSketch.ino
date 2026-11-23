@@ -103,7 +103,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.47.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.48.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -421,7 +421,7 @@ void setup() {
   // never slow the audio interrupt down
   __set_FPSCR(__get_FPSCR() | (1u << 24));
   stringsInit(strings);
-  strings.maxVoices = 3;                     // v1.47: start safe (2-3 real players fit), the guard adjusts
+  strings.maxVoices = 4;                     // v1.48: start safe (4-6 half-rate players fit), the guard adjusts
   stringsControl(strings);
   NVIC_SetPriority(TC4_IRQn, 0);             // audio first
   // cycle counter for the CPU load report on the serial monitor

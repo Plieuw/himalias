@@ -88,6 +88,19 @@ int main() {
     if (std::fabs(c) > 10.0) { std::printf("FAIL intonation %.1f Hz: %+.1f cents\n", s.rootHz, c); ++fails; }
   }
 
+  // v1.48: ensemble players run at half rate -- still in tune
+  for (int k = 0; k < 3; ++k) {
+    const float hz[3] = { 220.0f, 440.0f, 880.0f };
+    stringsInit(s);
+    s.instrument = MDL_VIOLIN_SECTION; s.layout = LAY_UNISON; s.rootHz = hz[k];
+    s.speed = 0.5f; s.pressure = 0.5f; s.beta = 0.11f; s.vibrato = false;
+    stringsControl(s);
+    if (!render(true, 50000, x)) { ++fails; continue; }
+    const double c = centsOff(x, 25000, 50000, s.rootHz);
+    if (std::fabs(c) > 10.0) { std::printf("FAIL section intonation %.1f Hz: %+.1f cents\n", s.rootHz, c); ++fails; }
+    std::printf("section intonation %.0f Hz: %+.1f cents\n", hz[k], c);
+  }
+
   // legato finger travel is continuous and supports fractional pitch CV for
   // both a solo instrument and an ensemble player (no fret/semitone snapping).
   for (int model = 0; model < 2; ++model) {
@@ -105,7 +118,7 @@ int main() {
     if (model == 0 && std::fabs(s.v[0].hz - fractionalHz) > 1.0f) {
       std::printf("FAIL fractional pitch CV was quantized: %.3f vs %.3f\n", s.v[0].hz, fractionalHz); ++fails;
     }
-    stringsTick(s, true);
+    for (int q = 0; q < 16; ++q) stringsTick(s, true);      // v1.47/48: block and half-rate steps
     if (std::fabs(s.v[0].len - target) >= std::fabs(before - target) ||
         std::fabs(s.v[0].len - target) < 0.005f * std::fabs(before - target)) {
       std::printf("FAIL model %d legato slide snapped or moved in wrong direction\n", model); ++fails;
@@ -411,7 +424,7 @@ int main() {
     if (!(en[5] > en[0] + 0.05f) || !(en[1] != en[4])) { std::printf("FAIL long arc %.3f %.3f %.3f\n", en[0], en[4], en[5]); ++fails; }
     // the section follows its leader: player 1 starts at once, the others later
     stringsInit(s); s.instrument = MDL_VIOLIN_SECTION; s.rootHz = 440.0f; stringsControl(s);
-    stringsTick(s, true);
+    stringsTick(s, true); stringsTick(s, true);              // v1.48: players take turns (half rate)
     bool lead = s.v[0].gate, others = false;
     for (int i = 1; i < STR_VOICES; ++i) if (s.v[i].active && s.v[i].onset) others = true;
     if (!lead || !others) { std::printf("FAIL concertmaster leads\n"); ++fails; }
