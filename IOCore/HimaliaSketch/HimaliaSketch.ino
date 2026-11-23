@@ -103,7 +103,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.54.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.55.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -128,14 +128,17 @@ static void seqStep(uint16_t change_adc, bool scaleB);
 #include "strings_engine.h" // bowed strings physical model (v2)
 // v1.43 1V/OCT calibration record (defined up here: the Arduino builder puts
 // its generated function prototypes above the first function)
-// v1.54: the calibration lives in the last 8 KB block of the flash this
-// chip really has (NVMCTRL reports it). v1.43 ... v1.53 used a fixed
-// address for 1 MB: on a chip with less flash that read faulted at
-// power-up (no sound, USB gone).
+// v1.55: the calibration lives in an 8 KB flash block reserved inside the
+// firmware itself. v1.43 ... v1.54 read the last block of the flash: on this
+// module that area is not readable (most likely reserved as SmartEEPROM by
+// the bootloader's fuses), so the read faulted at power-up -- no sound, USB
+// gone. A firmware update erases the block: calibrate again after updating.
+__attribute__((aligned(8192), used))
+const uint8_t cal_block[8192] = { 0xFF, 0xFF, 0xFF, 0xFF };
 static inline uint32_t calAddr(){
-  const uint32_t size = (uint32_t)NVMCTRL->PARAM.bit.NVMP * 512u;   // pages x 512 bytes
-  if(size < 0x20000u || size > 0x100000u) return 0;                // unknown: no calibration
-  return size - 0x2000u;
+  uint32_t a = (uint32_t)cal_block;
+  __asm__ volatile("" : "+r"(a));            // a real flash read, never folded by the compiler
+  return a;
 }
 #define CAL_ADDR   calAddr()
 #define CAL_MAGIC  0x48535431u      // "HST1"
