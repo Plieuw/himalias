@@ -232,6 +232,7 @@ struct StrVoice {
   float fingerLen;                // stopped string length the finger is on
   float tremPh, tremInc;          // tremolo bow strokes
   float speedScale, pressOffs;    // this player's bow
+  float panOff;                   // v1.45: place inside the section (-1 left ... +1 right, scaled)
   float slBase;                   // v1.39: friction slope without the accent (control rate)
   float detune;                   // static intonation (ratio)
   float drift, driftTarget;       // slow intonation drift (cents)
@@ -384,7 +385,11 @@ struct StringsEngine {
   StrMode body[STR_FAMILIES][STR_BODY_MODES];      // divisi players (2 ... 6)
   StrMode bodyLead[STR_FAMILIES][STR_BODY_MODES];  // player 1 (same resonances, own state)
   float famLpLead[STR_FAMILIES];
-  float outDivisi;                // last sample of the divisi-only output
+  float outDivisi;                // last sample of the RIGHT output (v1.45 stereo; DIVISI OUT jack)
+  // v1.45 stereo seating: pan per family bus and player 1, width from the
+  // players' places inside their section (side signal per family)
+  float famPan[STR_FAMILIES], leadPan;
+  float sideLp[STR_FAMILIES];
   float dc2x, dc2y;
   float bodyDirect[STR_FAMILIES];
   StrAir airF;
@@ -641,7 +646,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.turn = 0; v.slip = 0.0f; v.tBp1 = v.tBp2 = 0.0f;
     v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = v.slideOpen = 0.0f; v.slideSemis = 0.0f;
     v.attackK = 1.0f / (0.075f * STR_SR);
-    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.vibGrowK = 1.0f / (1.4f * STR_SR); v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f; v.slBase = 1.0f;
+    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.vibGrowK = 1.0f / (1.4f * STR_SR); v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f; v.slBase = 1.0f; v.panOff = 0.0f;
     v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
     v.ringLoss = 0.99f;
@@ -653,6 +658,8 @@ static inline void stringsInit(StringsEngine &s) {
   s.pizz = false; s.vibrato = true; s.tremolo = false; s.mute = false; s.artic = ART_LEGATO;
   for (int f = 0; f < STR_FAMILIES; f++) { s.famLp[f] = 0; s.famLpLead[f] = 0; s.famLpK[f] = 0.5f; }
   s.outDivisi = 0; s.dc2x = s.dc2y = 0;
+  for (int f = 0; f < STR_FAMILIES; f++) { s.famPan[f] = 0.0f; s.sideLp[f] = 0.0f; }
+  s.leadPan = 0.0f;
   for (int k = 0; k < 2; k++) { for (int n = 0; n < STR_LIM_LOOK; n++) s.lim[k].d[n] = 0.0f; s.lim[k].pk = 0.0f; s.lim[k].g = 1.0f; s.lim[k].w = 0; s.lim[k].hold = 0; }
   {
     StrBrain &b = s.brain;
@@ -925,6 +932,20 @@ static inline void stringsControl(StringsEngine &s) {
     s.expr = (solo ? 2.0f * sp : 1.0f) * C.expr;
     s.arcMul = C.arc; s.attackChr = C.attack; s.beatW = C.beat;
     s.glideMul = C.glide;
+  }
+  // ---- v1.45 stereo seating (SAMPLE OUT = left, DIVISI OUT = right).
+  //      Full strings in the orchestra seating (violins left, violas
+  //      centre, cellos and basses right), celli + basses split, a single
+  //      section centred and spread, a soloist in the middle
+  {
+    static const float FULL[STR_FAMILIES] = { -0.50f, 0.20f, 0.45f, 0.65f };
+    static const float LOW[STR_FAMILIES]  = { 0.0f, 0.0f, -0.30f, 0.45f };
+    static const float SPREAD[STR_VOICES] = { -0.55f, 0.55f, -0.25f, 0.25f, -0.85f, 0.85f };   // player places
+    const bool fullS = ins == INS_FULL_STRINGS, lowS = ins == INS_LOW_STRINGS;
+    for (int f = 0; f < STR_FAMILIES; f++) s.famPan[f] = solo ? 0.0f : (fullS ? FULL[f] : (lowS ? LOW[f] : 0.0f));
+    const float w = solo ? 0.0f : (fullS || lowS ? 0.30f : 0.75f);          // width inside a section
+    for (int i = 0; i < STR_VOICES; i++) s.v[i].panOff = w * SPREAD[i];
+    s.leadPan = solo ? 0.0f : s.famPan[s.v[0].family] + s.v[0].panOff;
   }
   // the PRESSURE knob is the playing zone, contact point and force together
   // like a player uses them: left = over the fingerboard with a light bow
@@ -1445,6 +1466,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   const StrArticDef &A = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : (uint8_t)ART_LEGATO];
   const uint32_t strokeMax = (uint32_t)(A.stroke * STR_SR);
   float famBus[STR_FAMILIES]  = { 0, 0, 0, 0 };   // divisi players
+  float sideBus[STR_FAMILIES] = { 0, 0, 0, 0 };   // v1.45: their places left / right
   float leadBus = 0.0f;                              // player 1
   uint8_t leadFam = s.v[0].family;
 
@@ -1741,7 +1763,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // follows the dynamic gate too (1 = no dynamic gate = unchanged)
     const float dyn = v.gain * v.bowGain * STR_VEL_LEV(v.vel) * v.levComp * v.atLev;
     if (i == 0) leadBus = radiated * dyn;                    // force on the bridge
-    else        famBus[v.family] += radiated * dyn;
+    else      { famBus[v.family] += radiated * dyn; sideBus[v.family] += radiated * dyn * v.panOff; }
   }
 
   // ---- sympathetic resonance: the open strings ring along through the bridge
@@ -1768,7 +1790,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     s.famLpLead[leadFam] += (y - s.famLpLead[leadFam]) * s.famLpK[leadFam];
     lead = s.famLpLead[leadFam];
   }
-  float div = 0.0f, divIn = 0.0f;
+  float div = 0.0f, divIn = 0.0f, divL = 0.0f, divR = 0.0f, airL = 0.0f, airR = 0.0f;
   for (int f = 0; f < STR_FAMILIES; f++) {
     StrMode *m = s.body[f];
     const float x = famBus[f];
@@ -1786,26 +1808,34 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       y += yy;
     }
     s.famLp[f] += (y - s.famLp[f]) * s.famLpK[f];            // top end roll-off
-    div += s.famLp[f];
+    // v1.45 stereo: the family at its place, its players spread around it
+    // (balance law: the centre keeps full level in both outputs)
+    const float p = s.famPan[f];
+    s.sideLp[f] += (sideBus[f] * s.bodyDirect[f] - s.sideLp[f]) * s.famLpK[f];
+    divL += s.famLp[f] * (p > 0.0f ? 1.0f - p : 1.0f) - s.sideLp[f];
+    divR += s.famLp[f] * (p < 0.0f ? 1.0f + p : 1.0f) + s.sideLp[f];
+    airL += x * (p > 0.0f ? 1.0f - p : 1.0f);
+    airR += x * (p < 0.0f ? 1.0f + p : 1.0f);
   }
+  (void)div; (void)divIn;
+  const float lp = s.leadPan;
+  const float gLl = lp > 0.0f ? 1.0f - lp : 1.0f, gLr = lp < 0.0f ? 1.0f + lp : 1.0f;
   // air: the top octave of the raw strings on top of the bodies
   const float air = s.air * (s.mute ? 0.25f : 1.0f);
-  lead += strAirHp(s.airF, 0, leadBus) * air;
-  div  += strAirHp(s.airF, 1, divIn) * air;
+  float outL = lead * gLl + divL + strAirHp(s.airF, 0, leadBus * gLl + airL) * air;
+  float outR = lead * gLr + divR + strAirHp(s.airF, 1, leadBus * gLr + airR) * air;
   s.xf += (s.xfTarget - s.xf) * (s.xfTarget < s.xf ? 0.0042f : 0.0021f);   // ~5 ms out, ~10 ms in
-  lead *= s.level * s.xf;
-  div  *= s.level * s.xf;
+  outL *= s.level * s.xf;
+  outR *= s.level * s.xf;
 
-  // divisi-only output (second DAC): DC blocking and fixed output calibration.
-  // No limiter or automatic gain control: bow dynamics and transients pass through.
-  s.dc2y = div - s.dc2x + 0.9995f * s.dc2y;
-  s.dc2x = div;
+  // right (DIVISI OUT jack): DC blocking, the same safety net as the left
+  s.dc2y = outR - s.dc2x + 0.9995f * s.dc2y;
+  s.dc2x = outR;
   s.outDivisi = strLimit(s.lim[1], s.dc2y * STR_OUT_GAIN);
 
-  // full mix (SAMPLE OUT)
-  const float out = lead + div;
-  s.dcy = out - s.dcx + 0.9995f * s.dcy;
-  s.dcx = out;
+  // left (SAMPLE OUT jack)
+  s.dcy = outL - s.dcx + 0.9995f * s.dcy;
+  s.dcx = outL;
   return strLimit(s.lim[0], s.dcy * STR_OUT_GAIN);
 }
 
@@ -1826,7 +1856,7 @@ static inline void stringsClear(StringsEngine &s) {
       s.body[f][m].y1 = s.body[f][m].y2 = 0;
       s.bodyLead[f][m].y1 = s.bodyLead[f][m].y2 = 0;
     }
-    s.famLp[f] = s.famLpLead[f] = 0;
+    s.famLp[f] = s.famLpLead[f] = 0; s.sideLp[f] = 0;
   }
   s.dcx = s.dcy = 0; s.dc2x = s.dc2y = 0; s.outDivisi = 0;
   s.gatePrev = false;

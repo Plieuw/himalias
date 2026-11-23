@@ -1,7 +1,7 @@
 //
 //  Himalia firmware -- Strings (bowed-string physical model), beta
 //
-//  SAMPLE OUT: up to six bowed strings from one pitch CV (strings_engine.h)
+//  SAMPLE OUT + DIVISI OUT: up to six bowed strings in stereo from one pitch CV (strings_engine.h)
 //  The controls in playing order (v1.34): WHAT plays, HOW it is played, and
 //  the PERFORMANCE that drives it.
 //
@@ -76,7 +76,12 @@
 //  expected note length, a section that follows its leader.
 //
 //  Outputs and LEDs
-//   - noise side DAC out .......... divisi players only (players 2 ... 6) as strings
+//   - SAMPLE OUT / DIVISI OUT ..... stereo (v1.45): left / right in the orchestra
+//                                   seating (full strings: violins left, violas
+//                                   centre, cellos + basses right; celli + basses
+//                                   split; a section centred and spread; a
+//                                   soloist in the middle, both jacks equal).
+//                                   Mono: use SAMPLE OUT (right side softer)
 //   - square outputs 1 ... 5 ...... players 1-5 as a square wave while they sound
 //   - square output 6 ............. ENVELOPE OUT (v1.44): follows SAMPLE OUT,
 //                                   sigma-delta + the output's filter capacitor
@@ -97,7 +102,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.44.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.45.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -715,7 +720,8 @@ void renderAudio() {
     // it into a CV: 0 = silence ... full = playing loud
     {
       static float envf = 0.0f, sd = 0.0f;
-      const float a = out < 0.0f ? -out : out;
+      const float mo = 0.5f * (out + strings.outDivisi);      // both sides (v1.45 stereo)
+      const float a = mo < 0.0f ? -mo : mo;
       envf += (a - envf) * (a > envf ? 0.0070f : 0.00017f);
       float e = envf * 2.5f;                                // the usual playing level fills the range
       e = e > 1.0f ? 1.0f : e;
@@ -751,13 +757,13 @@ void renderAudio() {
     // gives 0 V at the jack (output stage from the schematic, see SEQ_CV_*)
     int32_t dl = (int32_t)(SEQ_CV_ZERO_CODE + out * EURO_5V_CODES);
     if(dl < 0) dl = 0;  if(dl > 4095) dl = 4095;
-    DAC->DATA[1].reg = (uint16_t)dl;            // SAMPLE OUT
+    DAC->DATA[1].reg = (uint16_t)dl;            // SAMPLE OUT = LEFT (v1.45 stereo)
     {
       // diagnose mode: CPU load as a voltage instead of the divisi audio
       const float o2 = diag_mode ? diag_load : strings.outDivisi;
       int32_t d2 = (int32_t)(SEQ_CV_ZERO_CODE + o2 * EURO_5V_CODES);
       if(d2 < 0) d2 = 0;  if(d2 > 4095) d2 = 4095;
-      DAC->DATA[0].reg = (uint16_t)d2;          // noise side DAC out: divisi players only
+      DAC->DATA[0].reg = (uint16_t)d2;          // DIVISI OUT = RIGHT (v1.45 stereo)
     }
 
     // trigger out (PA22, DIV TRIG jack), v1.43: follows the phrasing --

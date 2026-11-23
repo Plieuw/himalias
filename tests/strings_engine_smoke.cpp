@@ -183,25 +183,29 @@ int main() {
     }
   }
 
-  // divisi output: silent for a solo, sounding for a section, never louder than the mix
+  // v1.45 stereo (SAMPLE OUT = left, DIVISI OUT = right): a soloist in the
+  // middle (both equal), full strings violins left / basses right, a section
+  // spread (the two sides differ), never above the ceiling
   {
-    const int ins[2] = { MDL_SOLO_VIOLIN, MDL_VIOLIN_SECTION };
-    for (int k = 0; k < 2; ++k) {
+    const int ins[3] = { MDL_SOLO_VIOLIN, MDL_FULL_STRINGS, MDL_VIOLIN_SECTION };
+    for (int k = 0; k < 3; ++k) {
       stringsInit(s);
-      s.instrument = (uint8_t)ins[k]; s.layout = LAY_MAJOR; s.rootHz = 261.6f; s.speed = 0.6f;
+      s.instrument = (uint8_t)ins[k]; s.layout = LAY_UNISON; s.rootHz = 261.6f; s.speed = 0.6f;
       stringsControl(s);
-      double a = 0, b = 0; float p2 = 0;
+      double a = 0, b = 0, d2 = 0; float pk = 0;
       for (unsigned n = 0; n < 50000; ++n) {
         if ((n & 127) == 0) stringsControl(s);
         const float y = stringsTick(s, true);
         const float d = s.outDivisi;
         if (!std::isfinite(d)) { ++fails; break; }
-        if (n > 20000) { a += (double)y * y; b += (double)d * d; }
-        if (std::fabs(d) > p2) p2 = std::fabs(d);
+        if (n > 20000) { a += (double)y * y; b += (double)d * d; d2 += (double)(y - d) * (y - d); }
+        pk = std::fmax(pk, std::fmax(std::fabs(y), std::fabs(d)));
       }
-      const double ra = std::sqrt(a / 30000), rb = std::sqrt(b / 30000);
-      if (k == 0 && rb > 0.005) { std::printf("FAIL divisi out not silent for solo: %.3f\n", rb); ++fails; }
-      if (k == 1 && (rb < 0.02 || p2 > 1.0f)) { std::printf("FAIL divisi out section: rms %.3f peak %.3f (mix %.3f)\n", rb, p2, ra); ++fails; }
+      const double L = std::sqrt(a / 30000), R = std::sqrt(b / 30000), diff = std::sqrt(d2 / 30000);
+      if (pk > 1.0f || L < 0.01 || R < 0.01) { std::printf("FAIL stereo %d: L %.3f R %.3f peak %.3f\n", ins[k], L, R, pk); ++fails; }
+      if (k == 0 && diff > 0.05 * L) { std::printf("FAIL soloist not in the middle (%.3f)\n", diff / L); ++fails; }
+      if (k == 2 && diff < 0.05 * L) { std::printf("FAIL section has no width (%.3f)\n", diff / L); ++fails; }
+      std::printf("stereo model %2d: L %.3f R %.3f, side %.0f %%\n", ins[k], L, R, 100 * diff / (L + R));
     }
   }
 
