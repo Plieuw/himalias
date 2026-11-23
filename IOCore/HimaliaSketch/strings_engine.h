@@ -82,33 +82,44 @@ enum StrInstrument : uint8_t { INS_SOLO_VIOLIN = 0, INS_SOLO_CELLO, INS_VIOLIN_S
                                INS_SOLO_VIOLA, INS_VIOLA_SECTION, INS_BASE_COUNT };
 enum StrLayout     : uint8_t { LAY_UNISON = 0, LAY_OCTAVES, LAY_FIFTHS, LAY_MAJOR, LAY_MINOR,
                                LAY_DIVISI_MAJOR, LAY_DIVISI_MINOR, LAY_CLUSTER, LAY_COUNT };
-// models on the RATCHET knob (v1.35): 7 instruments x 3 playing characters.
-// Turn a little = another character, turn further = another instrument.
-// The character is how the player interprets the phrase (adaptive playing):
-//   classical = clean and controlled, romantic = singing, more vibrato and
-//   slides, film = broad, swelling long notes, weight on the heavy beats
+// models on the RATCHET knob (v1.49), in style blocks:
+//   classical  (all 7)   VL  VC  VL+ VA+ VC+ LOW TUT
+//   romantic   (all 7)   VL  VC  VL+ VA+ VC+ LOW TUT
+//   film       (4)       VL+ VC+ LOW TUT
+//   soul       (3)       VL+ VC+ TUT
+//   funk       (3)       VL (stab) VL+ TUT
+// The style is how the players interpret the phrase (adaptive playing).
 enum StrModel : uint8_t {
-  MDL_SOLO_VIOLIN = 0, MDL_SOLO_VIOLIN_ROM, MDL_SOLO_VIOLIN_FILM,
-  MDL_SOLO_CELLO,      MDL_SOLO_CELLO_ROM,  MDL_SOLO_CELLO_FILM,
-  MDL_VIOLIN_SECTION,  MDL_VIOLIN_SECTION_ROM, MDL_VIOLIN_SECTION_FILM,
-  MDL_VIOLA_SECTION,   MDL_VIOLA_SECTION_ROM,  MDL_VIOLA_SECTION_FILM,
-  MDL_CELLO_SECTION,   MDL_CELLO_SECTION_ROM,  MDL_CELLO_SECTION_FILM,
-  MDL_LOW_STRINGS,     MDL_LOW_STRINGS_ROM,    MDL_LOW_STRINGS_FILM,
-  MDL_FULL_STRINGS,    MDL_FULL_STRINGS_ROM,   MDL_FULL_STRINGS_FILM,
+  MDL_SOLO_VIOLIN = 0, MDL_SOLO_CELLO, MDL_VIOLIN_SECTION, MDL_VIOLA_SECTION, MDL_CELLO_SECTION, MDL_LOW_STRINGS, MDL_FULL_STRINGS,
+  MDL_SOLO_VIOLIN_ROM, MDL_SOLO_CELLO_ROM, MDL_VIOLIN_SECTION_ROM, MDL_VIOLA_SECTION_ROM, MDL_CELLO_SECTION_ROM, MDL_LOW_STRINGS_ROM, MDL_FULL_STRINGS_ROM,
+  MDL_VIOLIN_SECTION_FILM, MDL_CELLO_SECTION_FILM, MDL_LOW_STRINGS_FILM, MDL_FULL_STRINGS_FILM,
+  MDL_VIOLIN_SECTION_SOUL, MDL_CELLO_SECTION_SOUL, MDL_FULL_STRINGS_SOUL,
+  MDL_SOLO_VIOLIN_FUNK, MDL_VIOLIN_SECTION_FUNK, MDL_FULL_STRINGS_FUNK,
   MDL_COUNT
 };
-enum StrCharacter : uint8_t { CHR_CLASSICAL = 0, CHR_ROMANTIC, CHR_FILM, CHR_COUNT };
+enum StrCharacter : uint8_t { CHR_CLASSICAL = 0, CHR_ROMANTIC, CHR_FILM, CHR_SOUL, CHR_FUNK, CHR_COUNT };
+// chord voicing per style (section chord layouts and divisi)
+enum StrVoicing : uint8_t { VOI_TRAD = 0, VOI_OPEN, VOI_SOUL, VOI_FUNK, VOI_COUNT };
 struct StrCharDef {
   float expr;     // phrase shaping depth (energy, attack, vibrato intention)
   float arc;      // depth of the long arc over 8 phrases
   float glide;    // shifts / portamento time (> 1 = slower, more audible)
   float attack;   // attack placement (> 1 = gentler)
   float beat;     // extra weight on heavy beats
+  float laid;     // v1.49: laid-back timing (s) -- soul sits behind the beat
+  float scoop;    // v1.49: long notes slide in from below (cents)
+  float fall;     // v1.49: the end of a phrase falls off (semitones)
+  int8_t shortB;  // v1.49: AUTO leans to longer (-1) / shorter (+1) strokes
+  uint8_t back;   // v1.49: weight on the backbeat (2 and 4) instead of the 1
+  uint8_t voi;    // v1.49: chord voicing
 };
 static const StrCharDef STR_CHAR[CHR_COUNT] = {
-  { 0.80f, 0.6f, 0.8f, 0.95f, 1.0f },   // classical
-  { 1.40f, 1.3f, 1.7f, 1.15f, 0.8f },   // romantic
-  { 1.20f, 1.8f, 1.1f, 1.05f, 2.0f },   // film
+  // expr  arc   glide attack beat  laid     scoop  fall  short back voicing
+  { 0.80f, 0.6f, 0.8f, 0.95f, 1.0f, 0.000f,  0.0f, 0.0f,  0,   0, VOI_TRAD },   // classical
+  { 1.40f, 1.3f, 1.7f, 1.15f, 0.8f, 0.004f,  0.0f, 0.0f, -1,   0, VOI_TRAD },   // romantic: a little behind, singing
+  { 1.20f, 1.8f, 1.1f, 1.05f, 2.0f, 0.000f,  0.0f, 0.0f,  0,   0, VOI_OPEN },   // film: broad, open chords
+  { 1.25f, 1.0f, 1.4f, 1.10f, 0.8f, 0.009f, 35.0f, 2.0f, -1,   1, VOI_SOUL },   // soul: laid back, scoops, falls, lush
+  { 0.90f, 0.5f, 0.6f, 0.80f, 1.2f, 0.000f,  0.0f, 3.0f,  1,   1, VOI_FUNK },   // funk: tight stabs on 2 and 4, falls (level: +2 dB over classical, by ear for short stabs)
 };
 #define INS_COUNT MDL_COUNT        // the RATCHET knob selects one of the models
 
@@ -172,26 +183,29 @@ struct StrModelDef {
 static const StrModelDef STR_MODELS[MDL_COUNT] = {
   //  base               art layout trem vibD   vibR   swell accent tight  ring  gain    character
   { INS_SOLO_VIOLIN,     -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 0.850f, CHR_CLASSICAL },  // solo violin, classical
-  { INS_SOLO_VIOLIN,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.097f, CHR_ROMANTIC },  // solo violin, romantic
-  { INS_SOLO_VIOLIN,     -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.083f, CHR_FILM },  // solo violin, film
-  { INS_SOLO_CELLO,      -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.122f, CHR_CLASSICAL },  // solo cello, classical
-  { INS_SOLO_CELLO,      -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.530f, CHR_ROMANTIC },  // solo cello, romantic
-  { INS_SOLO_CELLO,      -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.277f, CHR_FILM },  // solo cello, film
-  { INS_VIOLIN_SECTION,  -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.019f, CHR_CLASSICAL },  // violin section, classical
-  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.202f, CHR_ROMANTIC },  // violin section, romantic
-  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.180f, CHR_FILM },  // violin section, film
-  { INS_VIOLA_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.047f, CHR_CLASSICAL },  // viola section, classical
-  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.374f, CHR_ROMANTIC },  // viola section, romantic
-  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.246f, CHR_FILM },  // viola section, film
-  { INS_CELLO_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.547f, CHR_CLASSICAL },  // cello section, classical
-  { INS_CELLO_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 2.176f, CHR_ROMANTIC },  // cello section, romantic
-  { INS_CELLO_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 2.176f, CHR_FILM },  // cello section, film
-  { INS_LOW_STRINGS,     -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.540f, CHR_CLASSICAL },  // celli + basses, classical
-  { INS_LOW_STRINGS,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.977f, CHR_ROMANTIC },  // celli + basses, romantic
-  { INS_LOW_STRINGS,     -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.848f, CHR_FILM },  // celli + basses, film
-  { INS_FULL_STRINGS,    -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.460f, CHR_CLASSICAL },  // full strings, classical
-  { INS_FULL_STRINGS,    -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.937f, CHR_ROMANTIC },  // full strings, romantic
-  { INS_FULL_STRINGS,    -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.705f, CHR_FILM },  // full strings, film
+  { INS_SOLO_CELLO,      -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.013f, CHR_CLASSICAL },  // solo cello, classical
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 0.974f, CHR_CLASSICAL },  // violin section, classical
+  { INS_VIOLA_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.042f, CHR_CLASSICAL },  // viola section, classical
+  { INS_CELLO_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.788f, CHR_CLASSICAL },  // cello section, classical
+  { INS_LOW_STRINGS,     -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.542f, CHR_CLASSICAL },  // celli + basses, classical
+  { INS_FULL_STRINGS,    -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.554f, CHR_CLASSICAL },  // full strings, classical
+  { INS_SOLO_VIOLIN,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 0.947f, CHR_ROMANTIC },  // solo violin, romantic
+  { INS_SOLO_CELLO,      -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.258f, CHR_ROMANTIC },  // solo cello, romantic
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.052f, CHR_ROMANTIC },  // violin section, romantic
+  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.222f, CHR_ROMANTIC },  // viola section, romantic
+  { INS_CELLO_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.808f, CHR_ROMANTIC },  // cello section, romantic
+  { INS_LOW_STRINGS,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.592f, CHR_ROMANTIC },  // celli + basses, romantic
+  { INS_FULL_STRINGS,    -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.503f, CHR_ROMANTIC },  // full strings, romantic
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.209f, CHR_FILM },  // violin section, film
+  { INS_CELLO_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 2.181f, CHR_FILM },  // cello section, film
+  { INS_LOW_STRINGS,     -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 2.010f, CHR_FILM },  // celli + basses, film
+  { INS_FULL_STRINGS,    -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.712f, CHR_FILM },  // full strings, film
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.25f, 0.95f, 0.3f, 0.90f, 1.05f, 1.0f, 1.098f, CHR_SOUL },  // violin section, soul
+  { INS_CELLO_SECTION,   -1, -1,   -1, 1.25f, 0.95f, 0.3f, 0.90f, 1.05f, 1.0f, 1.770f, CHR_SOUL },  // cello section, soul
+  { INS_FULL_STRINGS,    -1, -1,   -1, 1.25f, 0.95f, 0.3f, 0.90f, 1.05f, 1.0f, 1.570f, CHR_SOUL },  // full strings, soul
+  { INS_SOLO_VIOLIN,     -1, -1,   -1, 0.45f, 1.05f, 0.0f, 1.45f, 0.55f, 1.0f, 1.062f, CHR_FUNK },  // solo violin, funk
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 0.45f, 1.05f, 0.0f, 1.45f, 0.55f, 1.0f, 1.218f, CHR_FUNK },  // violin section, funk
+  { INS_FULL_STRINGS,    -1, -1,   -1, 0.45f, 1.05f, 0.0f, 1.45f, 0.55f, 1.0f, 1.943f, CHR_FUNK },  // full strings, funk
 };
 
 // noise transient per articulation: bow scratch at the start of a stroke,
@@ -259,6 +273,8 @@ struct StrVoice {
   uint8_t blk; bool bowingB, restingB;
   float outCur, outPrev, o2, o3;  // v1.48: last step outputs (half-rate players are interpolated)
   float outHold;                  // ... the sample sent between two steps
+  float bend, bendRate;           // v1.49: scoop into / fall off a note (cents, cents per sample)
+  uint8_t seatDel;                // v1.49: distance to the listener (samples): each player's own phase
   float eqPrev;                   // ... high shelf state
   float Lcur, dL, bvCur, dBv, slB, betaB, rollB, liftB;
   float dynC, tiltC, vibC, bvC;   // v1.46: per-sample constants, refreshed when they change
@@ -465,7 +481,9 @@ struct StringsEngine {
   float air;                      // "air" band amount (top octave lift)
   float velocity;                 // dynamic gate level (1 = normal), sampled per note
   float noteDur;                  // expected note length (s): time between the last gates
-  float arcMul, attackChr, beatW;  // v1.35: playing character (long arc, attack, heavy-beat weight)
+  float arcMul, attackChr, beatW;
+  bool  backbeat;                 // v1.49: soul / funk weight on 2 and 4
+  float laid, scoop, fall;        // v1.49: laid-back time (s), scoop (cents), phrase-end fall (semitones)  // v1.35: playing character (long arc, attack, heavy-beat weight)
   StrFm fmP, fmB;                 // v1.40: pitch FM (1V/OCT, volts), bow FM (VELOCITY, 0 ... 1)
   float fmRatio;                  // v1.40: this sample's frequency ratio (pitch FM)
   float fmBow;                    // v1.40: this sample's bow-speed factor (bow FM)
@@ -594,6 +612,17 @@ static const uint8_t STR_LOW_FAMILY[STR_VOICES] = { FAM_VIOLA, FAM_VIOLA, FAM_CE
 
 static const int8_t STR_DIVISI_MAJOR[8] = { 0, 4, 7, 12, 16, 19, -5, 24 };
 static const int8_t STR_DIVISI_MINOR[8] = { 0, 3, 7, 12, 15, 19, -5, 24 };
+// v1.49 chord voicings per style: the section's major / minor chord layouts
+// and the divisi tone pools (traditional, open = film, soul = maj9 / m9
+// close and warm, funk = dominant / minor 7 close stabs)
+static const int8_t STR_VOI_MAJ[VOI_COUNT][STR_VOICES] = {
+  { 0, 4, 7, 12, 16, 19 }, { -12, 0, 7, 12, 16, 19 }, { 0, 4, 7, 11, 14, 16 }, { 0, 4, 7, 10, 12, 14 } };
+static const int8_t STR_VOI_MIN[VOI_COUNT][STR_VOICES] = {
+  { 0, 3, 7, 12, 15, 19 }, { -12, 0, 7, 12, 15, 19 }, { 0, 3, 7, 10, 14, 15 }, { 0, 3, 7, 10, 12, 15 } };
+static const int8_t STR_POOL_MAJ[VOI_COUNT][8] = {
+  { 0, 4, 7, 12, 16, 19, -5, 24 }, { 0, 7, 12, 16, 19, 24, -12, -5 }, { 0, 4, 7, 9, 11, 14, 12, 16 }, { 0, 4, 7, 10, 14, 12, 16, -2 } };
+static const int8_t STR_POOL_MIN[VOI_COUNT][8] = {
+  { 0, 3, 7, 12, 15, 19, -5, 24 }, { 0, 7, 12, 15, 19, 24, -12, -5 }, { 0, 3, 7, 10, 14, 12, 15, 5 }, { 0, 3, 7, 10, 14, 12, 15, 5 } };
 
 // ------------------------------------------------------------------ init
 // v1.46: the parts of a player's per-sample maths that only change at note
@@ -649,6 +678,8 @@ static inline void strHumanizeInit(StringsEngine &s) {
     v.hTime = i == 0 ? 0.0f : 0.25f + 0.75f * (0.5f + 0.5f * strRand(s));   // player 1 leads
     v.hRel  = 0.5f + 0.5f * strRand(s);
     v.hLev  = exp2f(0.25f * strRand(s));                     // +-1.5 dB
+    static const float SEAT[STR_VOICES] = { 0.0f, 18.0f, 36.0f, 55.0f, 75.0f, 95.0f };   // desks, back to front (samples)
+    v.seatDel = (uint8_t)(SEAT[i] * (0.7f + 0.6f * (0.5f + 0.5f * strRand(s))));   // v1.49: each player's phase
   }
   strHumanizeMean(s, 0);
 }
@@ -701,7 +732,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.vibGrowK = 1.0f / (1.4f * STR_SR); v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f; v.slBase = 1.0f; v.panOff = 0.0f; v.dynC = v.tiltC = v.vibC = v.bvC = 0.0f;
     for (int k = 0; k < STR_HIST; k++) v.hist[k] = 0.0f;
     v.hw = 0; v.dbl = false; v.dblSrc = 0; v.semisNow = 0; v.dDel = v.dDelT = 400.0f; v.dMod = 0.0f; v.dblG = 0.0f; v.hum = 1.0f;
-    v.outCur = v.outPrev = v.o2 = v.o3 = v.outHold = v.eqPrev = 0.0f;
+    v.outCur = v.outPrev = v.o2 = v.o3 = v.outHold = v.eqPrev = 0.0f; v.bend = v.bendRate = 0.0f; v.seatDel = 0;
     v.blk = 0; v.bowingB = v.restingB = false; v.Lcur = v.len; v.dL = 0.0f; v.bvCur = v.dBv = 0.0f; v.slB = 1.0f; v.betaB = 0.1f; v.rollB = 0.0f; v.liftB = 1.0f;
     v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
@@ -735,7 +766,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.fmP.pos = s.fmB.pos = s.fmP.on = s.fmB.on = false; s.fmRatio = 1.0f; s.fmBow = 1.0f; s.fmPress = 1.0f; s.fmPos = 1.0f;
   s.curModel = 0; s.xf = s.xfTarget = 1.0f; s.trigOut = 0;
   s.rawOn = 0; s.trigHold = 0; s.rawPrev = false; s.trigGap = false;
-  s.noteAhead = 0.6f; s.articLocked = false; s.halfCorr = 0.0f; s.arcMul = s.attackChr = s.beatW = 1.0f; s.beatAnchor = 0; s.barPulses = 0;
+  s.noteAhead = 0.6f; s.articLocked = false; s.halfCorr = 0.0f; s.arcMul = s.attackChr = s.beatW = 1.0f; s.backbeat = false; s.laid = s.scoop = s.fall = 0.0f; s.beatAnchor = 0; s.barPulses = 0;
   for (int i = 0; i < STR_ONSETS; i++) s.onG[i] = 0;
   s.pulse = 0; s.patLen = 0; s.patPulses = 0; s.beatCand = 0;
   strHumanizeInit(s); s.vibHz = 0; s.tremHz = 6.5f;
@@ -951,7 +982,11 @@ static inline uint8_t strArticResolve(const StringsEngine &s) {
   const StrModelDef &M = s.model;
   if (s.pizz) return ART_PIZZICATO;
   if (M.artic >= 0) return (uint8_t)M.artic;
-  const uint8_t c = s.brain.lenClass < 5 ? s.brain.lenClass : 1;
+  uint8_t c = s.brain.lenClass < 5 ? s.brain.lenClass : 1;
+  {                                                        // v1.49: the style leans longer / shorter
+    const int8_t sb = STR_CHAR[M.chr < CHR_COUNT ? M.chr : 0].shortB;
+    if (c == 1 && sb > 0) c = 2; else if (c == 1 && sb < 0) c = 0;
+  }
   if (s.artic >= ART_COUNT) return STR_ART_BY_LEN[0][c];                  // AUTO
   if (!s.articLocked && s.artic >= ART_DETACHE && s.artic <= ART_SPICCATO)
     return STR_ART_BY_LEN[1 + s.artic - ART_DETACHE][c];
@@ -974,7 +1009,8 @@ static inline void stringsControl(StringsEngine &s) {
   const bool full = (ins == INS_FULL_STRINGS);
   const bool low  = (ins == INS_LOW_STRINGS);
   const bool divisi = (lay == LAY_DIVISI_MAJOR || lay == LAY_DIVISI_MINOR);
-  const int8_t *pool = (lay == LAY_DIVISI_MAJOR) ? STR_DIVISI_MAJOR : STR_DIVISI_MINOR;
+  const StrCharDef &CH = STR_CHAR[M.chr < CHR_COUNT ? M.chr : 0];   // v1.49 style
+  const int8_t *pool = (lay == LAY_DIVISI_MAJOR) ? STR_POOL_MAJ[CH.voi] : STR_POOL_MIN[CH.voi];
 
   s.model = M;                                             // (the resolver reads it)
   const uint8_t art = strArticResolve(s);
@@ -987,6 +1023,7 @@ static inline void stringsControl(StringsEngine &s) {
     const float sp = strClamp(s.knobSpread, 0.0f, 1.0f);
     s.expr = (solo ? 2.0f * sp : 1.0f) * C.expr;
     s.arcMul = C.arc; s.attackChr = C.attack; s.beatW = C.beat;
+    s.backbeat = C.back != 0; s.laid = C.laid; s.scoop = C.scoop; s.fall = C.fall;
     s.glideMul = C.glide;
   }
   // ---- v1.45 stereo seating (SAMPLE OUT = left, DIVISI OUT = right).
@@ -1082,7 +1119,7 @@ static inline void stringsControl(StringsEngine &s) {
     else if (full) { fam = STR_FULL_FAMILY[i]; semis = STR_FULL_LAYOUT[lay][i]; }
     else if (low)  { fam = STR_LOW_FAMILY[i];  semis = STR_LOW_LAYOUT[lay][i]; }
     else           { fam = (ins == INS_CELLO_SECTION) ? FAM_CELLO : (ins == INS_VIOLA_SECTION ? FAM_VIOLA : FAM_VIOLIN);
-                     semis = STR_SECTION_LAYOUT[lay][i]; }
+                     semis = lay == LAY_MAJOR ? STR_VOI_MAJ[CH.voi][i] : (lay == LAY_MINOR ? STR_VOI_MIN[CH.voi][i] : STR_SECTION_LAYOUT[lay][i]); }
     if (divisi && !solo && i > 0) semis += pool[s.divisiTone[i] & 7];
     semis += A.semis;
     v.family = fam;
@@ -1230,7 +1267,8 @@ static inline void stringsControl(StringsEngine &s) {
       if (r.semisNow == v.semisNow) { best = j; break; }
       if (best < 0) best = j;
     }
-    if (best < 0) v.dbl = false; else v.dblSrc = (uint8_t)best;
+    if (best < 0) { v.dbl = false; if (nActive > 1) nActive--; s.level = 1.0f / sqrtf((float)nActive); }   // silent: not counted
+    else v.dblSrc = (uint8_t)best;
   }
   if (solo) s.level *= 1.3f;
   if (s.mute) s.level *= 0.75f;
@@ -1428,7 +1466,15 @@ static inline void strBrainNote(StringsEngine &s) {
   if (s.pulse && s.barPulses && b.nHist) {
     const float m = (float)(s.now - s.beatAnchor) / (float)s.pulse;
     const int mi = (int)(m + 0.5f);
-    if (fabsf(m - (float)mi) < 0.25f && mi % s.barPulses == 0) { b.downBow = true; e *= 1.0f + 0.05f * s.beatW; acc *= 1.0f + 0.25f * s.beatW; }
+    if (fabsf(m - (float)mi) < 0.25f && mi % s.barPulses == 0) {
+      b.downBow = true;
+      if (!s.backbeat) { e *= 1.0f + 0.05f * s.beatW; acc *= 1.0f + 0.25f * s.beatW; }
+    }
+    // v1.49 soul / funk: the weight goes on the backbeat (2 and 4)
+    if (s.backbeat && s.barPulses >= 4 && (s.barPulses & 3) == 0 && fabsf(m - (float)mi) < 0.25f) {
+      const int bl = s.barPulses / 4, k = (mi % s.barPulses);
+      if (k % bl == 0 && ((k / bl) & 1)) { e *= 1.0f + 0.06f * s.beatW; acc *= 1.0f + 0.35f * s.beatW; }
+    }
   }
   // v1.37: a short or normal note on a heavy beat / phrase start, not in a
   // fast passage, gets a bitten martele stroke; a phrase-ending note eases
@@ -1566,6 +1612,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       const float r = gate ? 0.6f * v.hTime + 0.4f * j : 0.6f * v.hRel + 0.4f * j;
       v.onset = (solo || i == 0) ? 0
               : (uint32_t)((gate ? 0.004f + 0.030f * r * together : 0.002f + 0.020f * r) * M.tight * STR_SR);
+      if (gate) v.onset += (uint32_t)(s.laid * STR_SR);      // v1.49: laid back (soul) -- the whole section
       if (gate && !solo) v.hNoteT = 1.0f + 0.118f * M.tight * strRand(s);  // this note: +-1 dB
     }
     if (gate && !solo) strHumanizeMean(s, 1);
@@ -1592,8 +1639,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       const float played = v.outHold;                        // between two steps (see below)
       v.hist[v.hw] = played;
       v.hw = (uint16_t)((v.hw + 1) & (STR_HIST - 1));
-      if (i == 0) leadBus = played;
-      else      { famBus[v.family] += played; sideBus[v.family] += played * v.panOff; }
+      const float heard = v.hist[(v.hw - 1u - v.seatDel) & (STR_HIST - 1)];   // v1.49: from the player's seat
+      if (i == 0) leadBus = heard;
+      else      { famBus[v.family] += heard; sideBus[v.family] += heard * v.panOff; }
       continue;
     }
 
@@ -1617,6 +1665,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         else if (v.family == FAM_BASS) tau *= 1.25f;
         v.relK = 1.0f / (tau * STR_SR);
         v.relRamp = 0.0f;                                     // the bow slows down gently, no kink
+        if (s.fall > 0.0f && s.brain.phraseEnd && A.mode == MODE_BOW && v.env > 0.1f)   // v1.49: the phrase falls off
+          v.bendRate = -s.fall * 100.0f / (0.25f * STR_SR) * (0.8f + 0.4f * (0.5f + 0.5f * strRand(s)));
         if (v.env > 0.1f && A.mode == MODE_BOW) {
           const float releaseDyn = 0.45f + 0.30f * strClamp(v.vel, 0.0f, 1.0f);
           v.tran += (v.relStop ? 0.0025f : 0.0015f) * releaseDyn * (0.90f + 0.10f * strRand(s));
@@ -1648,6 +1698,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           v.vibIntent = s.brain.vibIntent; v.vibGrow = 0.0f; v.relRamp = 1.0f;
           v.vibGrowK = 1.0f / (strClamp(1.1f * s.noteAhead, 0.3f, 1.4f) * STR_SR);   // v1.37: develops over the note
           v.attackK = 1.0f / (attackTau * STR_SR);
+          v.bendRate = 0.0f;                                  // v1.49: scoop into a long note (soul)
+          v.bend = (s.scoop > 0.0f && A.mode == MODE_BOW && s.noteAhead > 0.35f) ? -s.scoop * (0.7f + 0.3f * (0.5f + 0.5f * strRand(s))) : 0.0f;
           // bow speed from the note length: short notes (fast tempo) fast bow,
           // long notes slow bow (0.6 s = normal)
           // v1.34: from the look-ahead (this note's expected length), so the
@@ -1768,7 +1820,9 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       const float vibRel = v.vibAmt * 100.0f;
       v.rollB = vibRel * (v.vc < 0 ? -v.vc : v.vc);
       // the string length at the end of this block: ramp towards it
-      const float Lend = v.len * (1.0f + v.vibAmt * vibShape);
+      if (v.bendRate != 0.0f) { v.bend += v.bendRate * n4; if (v.bend < -s.fall * 100.0f) { v.bend = -s.fall * 100.0f; v.bendRate = 0.0f; } }
+      else if (v.bend != 0.0f) { v.bend *= 1.0f - n4 * (1.0f / (0.06f * STR_SR)); if (v.bend > -0.5f) v.bend = 0.0f; }   // a scoop settles in ~60 ms
+      const float Lend = v.len * (1.0f + v.vibAmt * vibShape) * (1.0f - v.bend * 0.000578f);
       v.dL = (Lend - v.Lcur) * (1.0f / STR_BLK);           // per step
       v.betaB = s.beta * (0.8f + 0.2f * v.bowMul);
       // bow speed at the end of this block
@@ -1903,8 +1957,11 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     }
     v.hist[v.hw] = played;                                  // v1.47: for a doubler of this player
     v.hw = (uint16_t)((v.hw + 1) & (STR_HIST - 1));
-    if (i == 0) leadBus = played;                            // force on the bridge
-    else      { famBus[v.family] += played; sideBus[v.family] += played * v.panOff; }
+    // v1.49: each section player is heard from its own seat: 0 ... ~2.5 ms
+    // further away (front desk first), so every player has its own phase
+    const float heard = solo ? played : v.hist[(v.hw - 1u - v.seatDel) & (STR_HIST - 1)];
+    if (i == 0) leadBus = heard;                             // force on the bridge
+    else      { famBus[v.family] += heard; sideBus[v.family] += heard * v.panOff; }
   }
   // ---- v1.47 doublers: a delayed copy of a real player (its own timing,
   //      a drifting delay = a few cents of intonation, its own level and

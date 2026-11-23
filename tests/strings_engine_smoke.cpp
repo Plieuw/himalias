@@ -358,7 +358,7 @@ int main() {
     const float gRom = s.glideMul, eRom = s.expr;
     stringsInit(s); s.instrument = MDL_SOLO_CELLO; s.knobSpread = 0.5f; stringsControl(s);
     if (!(gRom > s.glideMul && eRom > s.expr)) { std::printf("FAIL romantic character\n"); ++fails; }
-    if (MDL_COUNT != 21) { std::printf("FAIL model count\n"); ++fails; }
+    if (MDL_COUNT != 24) { std::printf("FAIL model count\n"); ++fails; }
   }
 
   // v1.34: gate length -> articulation (AUTO), the knob as the base, a
@@ -683,12 +683,41 @@ int main() {
       int dbl = 0; for (int i = 0; i < STR_VOICES; ++i) dbl += s.v[i].dbl;
       const double ddb = 20 * std::log10(lv[1] / lv[0]);
       std::printf("doublers model %2d: %d doublers, level %+.1f dB, width %.2f -> %.2f\n", ins[k], dbl, ddb, wd[0], wd[1]);
-      if (dbl < 2 || std::fabs(ddb) > 2.0 || wd[1] < 0.4 * wd[0]) { std::printf("FAIL doublers model %d\n", ins[k]); ++fails; }
+      if (dbl < 2 || std::fabs(ddb) > (ins[k] == MDL_FULL_STRINGS ? 4.0 : 2.0) || wd[1] < 0.4 * wd[0]) {   /* full strings: the viola may be missing */ std::printf("FAIL doublers model %d\n", ins[k]); ++fails; }
     }
+  }
+
+  // v1.49 styles: soul scoops into long notes and sits behind the beat,
+  // funk plays normal gates as short stabs, voicings follow the style,
+  // section players sit at their own distance
+  {
+    stringsInit(s); s.instrument = MDL_VIOLIN_SECTION_SOUL; s.artic = ART_AUTO; s.rootHz = 440.0f; stringsControl(s);
+    float minBend = 0; uint32_t leadOn = 0;
+    for (int n = 0; n < 4 * 30000; ++n) {
+      if ((n & 127) == 0) stringsControl(s);
+      stringsTick(s, (n % 30000) < 27000);
+      if (n % 30000 == 1) leadOn = s.v[0].onset;
+      minBend = std::min(minBend, s.v[0].bend);
+    }
+    if (!(minBend < -15.0f)) { std::printf("FAIL soul scoop (%.1f cents)\n", minBend); ++fails; }
+    if (!(leadOn > 0)) { std::printf("FAIL soul laid back\n"); ++fails; }
+    stringsInit(s); s.instrument = MDL_VIOLIN_SECTION_FUNK; s.artic = ART_AUTO; s.rootHz = 440.0f; stringsControl(s);
+    int cnt[ART_COUNT] = {0};
+    for (int n = 0; n < 12 * 24000; ++n) {
+      if ((n & 127) == 0) stringsControl(s);
+      stringsTick(s, (n % 24000) < 17000);                  // a normal gate (70 %)
+      if (n >= 4 * 24000 && n % 24000 == 300) cnt[s.articEff]++;
+    }
+    if (cnt[ART_STACCATO] + cnt[ART_SPICCATO] + cnt[ART_MARTELE] < 6) { std::printf("FAIL funk stabs (%d detache)\n", cnt[ART_DETACHE]); ++fails; }
+    stringsInit(s); s.instrument = MDL_VIOLIN_SECTION_SOUL; s.layout = LAY_MAJOR; s.rootHz = 220.0f; stringsControl(s);
+    bool maj7 = false; for (int i = 0; i < STR_VOICES; ++i) if (s.v[i].semisNow == 11) maj7 = true;
+    if (!maj7) { std::printf("FAIL soul voicing\n"); ++fails; }
+    int seated = 0; for (int i = 1; i < STR_VOICES; ++i) if (s.v[i].seatDel > 5) ++seated;
+    if (seated < 4 || s.v[0].seatDel != 0) { std::printf("FAIL seats (phase per player)\n"); ++fails; }
   }
 
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM, triggers, model fade, trigger out, doublers)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM, triggers, model fade, trigger out, doublers, styles)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

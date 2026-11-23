@@ -1,4 +1,4 @@
-# Himalia Strings: handleiding (v1.47)
+# Himalia Strings: handleiding (v1.49)
 
 Firmware voor de IO Instruments Himalia: een fysiek model van gestreken snaren, van solist tot strijkorkest. Elke frase die je erin stuurt, wordt als een uitvoering gespeeld.
 
@@ -10,7 +10,7 @@ De knoppen en jacks zitten op hun vertrouwde plek. Hieronder staan ze in **speel
 
 | Bediening | Functie |
 |---|---|
-| **MODEL** (RATCHET) | 21 standen: 7 instrumenten × 3 speelkarakters (zie tabel hieronder). Een klein stukje draaien = ander karakter, verder draaien = ander instrument. Tijdens het spelen wisselen fadet zacht over (~15 ms). |
+| **MODEL** (RATCHET) | 24 standen in stijl-blokken (zie hieronder). Tijdens het spelen wisselen fadet zacht over (~15 ms). |
 | **PITCH** (SAMPLE TUNE) + **1V/OCT** | De knop bestrijkt het echte bereik van het instrument (links = laagste losse snaar). De CV werkt in 1 V/oct. De quantizer laat de toon op een halve toon landen (zie §5). |
 | **SPREAD** + CV | Bij een ensemble: de layout (unisono, octaven, kwinten, groot, klein, divisi groot/klein, cluster). Bij een solist: hoe expressief de speler is (links neutraal, midden natuurlijk, rechts heel expressief). |
 
@@ -23,10 +23,19 @@ De knoppen en jacks zitten op hun vertrouwde plek. Hieronder staan ze in **speel
 - LOW: celli + bassen
 - TUT: volledig strijkorkest
 
-**Karakters** (per instrument, in deze volgorde):
-1. **Klassiek**: strak en beheerst.
-2. **Romantisch**: zingend, meer vibrato en hoorbare glijders.
-3. **Film**: breed, lange noten zwellen aan, gewicht op de zware tellen.
+**Stijl-blokken op MODEL**, van links naar rechts:
+
+| Stijl | Instrumenten | Kenmerk |
+|---|---|---|
+| **Klassiek** | VL, VC, VL+, VA+, VC+, LOW, TUT | strak en beheerst; traditionele akkoorden |
+| **Romantisch** | VL, VC, VL+, VA+, VC+, LOW, TUT | zingend, meer vibrato en glijders, iets achter de tel; AUTO leunt naar legato |
+| **Film** | VL+, VC+, LOW, TUT | breed, zwellende lange noten, gewicht op zware tellen; open akkoorden |
+| **Soul** | VL+, VC+, TUT | laid back (~9 ms), lange noten glijden van onder in (scoop), aan het eind van een frase een val; warme maj9- en m9-akkoorden; nadruk op 2 en 4 |
+| **Funk** | VL (stab), VL+, TUT | strakke korte stabs (AUTO leunt naar kort), nadruk op 2 en 4, val aan het eind van een frase; close dominant- en m7-akkoorden |
+
+De stijl bepaalt ook de akkoorden: bij een sectie de groot- en klein-layout op SPREAD en de divisi-tonen.
+
+In een ensemble zit elke speler op zijn eigen afstand (0–2,5 ms), dus elke speler heeft een eigen fase.
 
 ## 2. Hoe het gespeeld wordt
 

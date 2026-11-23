@@ -45,9 +45,10 @@ int main() {
       total += level.rms;
       if (level.peak > peak) peak = level.peak;
     }
-    static const char *INS[7] = { "solo_violin", "solo_cello", "violin_section", "viola_section", "cello_section", "low_strings", "full_strings" };
-    static const char *CHR[3] = { "classical", "romantic", "film" };
-    char name[48]; std::snprintf(name, sizeof name, "%s_%s", INS[model / 3], CHR[model % 3]);
+    static const char *INS[INS_BASE_COUNT] = { "solo_violin", "solo_cello", "violin_section", "cello_section", "full_strings", "low_strings", "solo_viola", "viola_section" };
+    static const char *CHR[CHR_COUNT] = { "classical", "romantic", "film", "soul", "funk" };
+    const uint8_t ins = STR_MODELS[model].ins, chr = STR_MODELS[model].chr;
+    char name[48]; std::snprintf(name, sizeof name, "%s_%s", ins < INS_BASE_COUNT ? INS[ins] : "?", chr < CHR_COUNT ? CHR[chr] : "?");
     if (peak > STR_LIM_CEIL + 1e-4) {
       std::fprintf(stderr, "FAIL model=%02d peak=%.6f exceeds calibrated headroom\n", model, peak);
       return 1;
