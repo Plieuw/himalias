@@ -350,8 +350,10 @@ int main() {
     const Case cs[] = {
       { 0.50f, 0.98f, ART_AUTO,     false, ART_LEGATO,   "AUTO long gate -> legato" },
       { 0.50f, 0.70f, ART_AUTO,     false, ART_DETACHE,  "AUTO normal gate -> detache" },
-      { 0.50f, 0.36f, ART_AUTO,     false, ART_STACCATO, "AUTO short gate -> staccato" },
-      { 0.25f, 0.30f, ART_AUTO,     false, ART_SPICCATO, "AUTO very short gate -> spiccato" },
+      { 0.50f, 0.36f, ART_AUTO,     false, ART_STACCATO, "AUTO short gate, moderate tempo -> staccato" },
+      { 0.25f, 0.30f, ART_AUTO,     false, ART_SPICCATO, "AUTO short gate, fast tempo -> spiccato" },
+      { 0.10f, 0.95f, ART_AUTO,     false, ART_LEGATO,   "AUTO fast tied run -> legato (slurred)" },
+      { 0.10f, 0.60f, ART_AUTO,     false, ART_SPICCATO, "AUTO very fast -> sautille / spiccato" },
       { 0.50f, 0.98f, ART_MARTELE,  false, ART_MARTELE,  "martele long stays martele" },
       { 0.50f, 0.36f, ART_MARTELE,  false, ART_STACCATO, "martele short -> staccato" },
       { 0.50f, 0.36f, ART_DETACHE,  true,  ART_DETACHE,  "ARTIC CV patched: no gate articulation" },
@@ -361,8 +363,15 @@ int main() {
       stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.artic = c.base; s.articLocked = c.locked; s.rootHz = 440.0f;
       stringsControl(s);
       const int P = (int)(c.ioi * STR_SR), G = (int)(c.duty * c.ioi * STR_SR);
-      for (int n = 0; n < 8 * P; ++n) { if ((n & 127) == 0) stringsControl(s); stringsTick(s, (n % P) < G); }
-      if (s.articEff != c.want) { std::printf("FAIL %s (got %d)\n", c.name, (int)s.articEff); ++fails; }
+      // the stroke most notes get (v1.37: heavy beats may bite as martele)
+      int cnt[ART_COUNT] = {0};
+      for (int n = 0; n < 12 * P; ++n) {
+        if ((n & 127) == 0) stringsControl(s);
+        stringsTick(s, (n % P) < G);
+        if (n >= 4 * P && n % P == 200) cnt[s.articEff]++;
+      }
+      int best = 0; for (int a = 1; a < ART_COUNT; ++a) if (cnt[a] > cnt[best]) best = a;
+      if (best != c.want) { std::printf("FAIL %s (got %d)\n", c.name, best); ++fails; }
     }
     // look-ahead: long-short-short pattern -> the note length comes from the pattern
     stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.artic = ART_AUTO; s.rootHz = 440.0f; stringsControl(s);
@@ -509,8 +518,35 @@ int main() {
     if (!(acc[5] < acc[4] && en[5] < en[4]))         { std::printf("FAIL soft note taken back\n"); ++fails; }
   }
 
+  // v1.37: staccato gaps are no rests; inside a pattern the note before a
+  // rest is known as a phrase end; heavy beats bite (martele) in AUTO
+  {
+    stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.artic = ART_AUTO; s.rootHz = 440.0f; stringsControl(s);
+    int starts = 0, notes = 0, mart = 0;
+    for (int k = 0; k < 16; ++k)
+      for (int n = 0; n < 24000; ++n) {
+        if ((n & 127) == 0) stringsControl(s);
+        stringsTick(s, n < 9000);                              // 0.5 s notes, short gates
+        if (n == 200 && k >= 6) { ++notes; if (s.brain.phraseStart) ++starts; if (s.articEff == ART_MARTELE) ++mart; }
+      }
+    if (starts > 1) { std::printf("FAIL staccato gaps read as rests (%d)\n", starts); ++fails; }
+    if (mart < 1 || mart > notes / 2) { std::printf("FAIL heavy beats bite (%d of %d)\n", mart, notes); ++fails; }
+    // pattern: 3 notes and a rest
+    stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.rootHz = 440.0f; stringsControl(s);
+    const int L[3] = { 12000, 12000, 24000 }, G[3] = { 11000, 11000, 10000 };
+    int endsOk = 0, endsBad = 0;
+    for (int bar = 0; bar < 10; ++bar)
+      for (int j = 0; j < 3; ++j)
+        for (int n = 0; n < L[j]; ++n) {
+          if ((n & 127) == 0) stringsControl(s);
+          stringsTick(s, n < G[j]);
+          if (n == 200 && bar >= 5) { if (s.brain.phraseEnd == (j == 2)) ++endsOk; else ++endsBad; }
+        }
+    if (endsBad > 1) { std::printf("FAIL phrase end look-ahead (%d ok, %d wrong)\n", endsOk, endsBad); ++fails; }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

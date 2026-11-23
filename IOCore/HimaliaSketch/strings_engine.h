@@ -235,6 +235,7 @@ struct StrVoice {
   // realistic vibrato: delayed start, slow-to-settle rate, cycle-to-cycle
   // wobble of rate and width, finger changes
   uint32_t vibDelay;              // samples before the vibrato starts
+  float    vibGrowK;              // v1.37: vibrato growth speed (follows the note length)
   float vibWarm;                  // rate / width settle after the start (0.75 ... 1)
   float jitR, jitRT, jitD, jitDT; // rate / width wobble (current, target)
   float vibPrevS;                 // previous vibrato sine (cycle start detection)
@@ -346,7 +347,10 @@ struct StrBrain {
   uint8_t  nHist;                 // notes with a known gate length (0 = none yet)
   float    dutyAvg;               // typical gate length / note interval
   float    predIoi, predGate;     // expected length of this note and of its gate (s)
-  uint8_t  lenClass;              // 0 long (tied), 1 normal, 2 short, 3 very short
+  uint8_t  lenClass;              // 0 long (tied), 1 normal, 2 short, 3 fast/very short, 4 accented
+  float    gapAvg;                // v1.37: usual silence between notes (s)
+  uint8_t  gapN;
+  bool     phraseEnd;             // v1.37: a rest follows this note (pattern look-ahead)
   uint8_t  phraseN;               // phrase number in the long arc (8 phrases)
   bool     downBow;               // this note falls on a heavy beat: down-bow
   float    velAvg;                // v1.36: typical velocity in this music
@@ -568,7 +572,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.alfT = 0.0f;
     v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = v.slideOpen = 0.0f; v.slideSemis = 0.0f;
     v.attackK = 1.0f / (0.075f * STR_SR);
-    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f;
+    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.vibGrowK = 1.0f / (1.4f * STR_SR); v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f;
     v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
     {                                                        // quarter-tone places, spread over the players
       static const float places[STR_VOICES] = { 0.125f, -0.5f, 0.75f, -1.0f, 0.375f, -0.25f };
@@ -589,7 +593,7 @@ static inline void stringsInit(StringsEngine &s) {
     StrBrain &b = s.brain;
     b.prevSemis = 0.0f; b.ioiAvg = 0.6f; b.onNow = b.offNow = 0; b.haveOff = false;
     b.idx = 0; b.peak = -99.0f;
-    b.energy = 1.0f; b.accent = 1.0f; b.velAvg = 1.0f; b.velN = 0; b.attackMul = 1.0f; b.vibIntent = 1.0f; b.phraseStart = true; b.connected = false;
+    b.energy = 1.0f; b.accent = 1.0f; b.velAvg = 1.0f; b.velN = 0; b.gapAvg = 0.0f; b.gapN = 0; b.phraseEnd = false; b.attackMul = 1.0f; b.vibIntent = 1.0f; b.phraseStart = true; b.connected = false;
   }
   s.bowNoise = 0.0f;
   s.transient = 1.0f;
@@ -802,19 +806,19 @@ static inline void strFingerMove(StringsEngine &s, StrVoice &v, float newLen, fl
 // choice (a long gate one step more connected, a short one shorter);
 // legato, portamento, pizzicato and the tone colours stay as chosen, and so
 // does everything when the ARTIC CV is patched (an explicit CV wins)
-static const uint8_t STR_ART_BY_LEN[5][4] = {
-  //  long          normal        short         very short
-  { ART_LEGATO,   ART_DETACHE,  ART_STACCATO, ART_SPICCATO },   // AUTO
-  { ART_LEGATO,   ART_DETACHE,  ART_STACCATO, ART_SPICCATO },   // detache
-  { ART_MARTELE,  ART_MARTELE,  ART_STACCATO, ART_STACCATO },   // martele
-  { ART_DETACHE,  ART_STACCATO, ART_STACCATO, ART_SPICCATO },   // staccato
-  { ART_STACCATO, ART_SPICCATO, ART_SPICCATO, ART_SPICCATO },   // spiccato
+static const uint8_t STR_ART_BY_LEN[5][5] = {
+  //  long          normal        short         very short / fast   accented
+  { ART_LEGATO,   ART_DETACHE,  ART_STACCATO, ART_SPICCATO,        ART_MARTELE  },   // AUTO
+  { ART_LEGATO,   ART_DETACHE,  ART_STACCATO, ART_SPICCATO,        ART_MARTELE  },   // detache
+  { ART_MARTELE,  ART_MARTELE,  ART_STACCATO, ART_STACCATO,        ART_MARTELE  },   // martele
+  { ART_DETACHE,  ART_STACCATO, ART_STACCATO, ART_SPICCATO,        ART_MARTELE  },   // staccato
+  { ART_STACCATO, ART_SPICCATO, ART_SPICCATO, ART_SPICCATO,        ART_SPICCATO },   // spiccato
 };
 static inline uint8_t strArticResolve(const StringsEngine &s) {
   const StrModelDef &M = s.model;
   if (s.pizz) return ART_PIZZICATO;
   if (M.artic >= 0) return (uint8_t)M.artic;
-  const uint8_t c = s.brain.lenClass < 4 ? s.brain.lenClass : 1;
+  const uint8_t c = s.brain.lenClass < 5 ? s.brain.lenClass : 1;
   if (s.artic >= ART_COUNT) return STR_ART_BY_LEN[0][c];                  // AUTO
   if (!s.articLocked && s.artic >= ART_DETACHE && s.artic <= ART_SPICCATO)
     return STR_ART_BY_LEN[1 + s.artic - ART_DETACHE][c];
@@ -1121,9 +1125,14 @@ static inline void strBrainNote(StringsEngine &s) {
   const float gap = b.haveOff ? (float)(s.now - b.offNow) / STR_SR : 9.0f;   // silence before this note
   // phrase continuity: a real rest (long against the rhythm) or a long pause
   // starts a new phrase; a gate that hardly opened is a connected note
-  const bool rest = gap > 0.25f && gap > 0.6f * b.ioiAvg;
+  // v1.37: a rest is a silence clearly longer than the usual silence
+  // between notes -- in staccato every note has a gap, that is no rest
+  const bool rest = gap > 0.25f && gap > 0.6f * b.ioiAvg && (b.gapN < 2 || gap > 1.7f * b.gapAvg + 0.05f);
   const bool newPhrase = (b.idx == 0 && b.peak < -90.0f) || rest || ioi > 2.4f * b.ioiAvg || gap > 1.2f;
-  b.connected = !newPhrase && gap < 0.04f;
+  // tied: (almost) no silence, relative to the tempo
+  b.connected = !newPhrase && gap < fminf(0.04f, 0.15f * ioi);
+  if (gap < 3.0f) { b.gapAvg = b.gapN ? b.gapAvg + (gap - b.gapAvg) * 0.3f : gap; if (b.gapN < 255) b.gapN++; }
+  if (s.onN <= 1) b.gapN = 0;
   const float interval = newPhrase ? 0.0f : semis - b.prevSemis;
   if (newPhrase) { b.idx = 0; b.peak = semis; b.phraseN = s.onN <= 1 ? 0 : (uint8_t)(b.phraseN + 1); }
 
@@ -1155,8 +1164,21 @@ static inline void strBrainNote(StringsEngine &s) {
   // length class for the articulation
   {
     const float duty = b.predGate / (b.predIoi > 0.01f ? b.predIoi : 0.01f);
+    // v1.37 tempo-aware, the way a player chooses the stroke:
+    //  - tied or (almost) full gates: legato, also in fast runs (slurred)
+    //  - very fast notes (< 0.11 s): the bow bounces by itself (spiccato /
+    //    sautille), whatever the gate does
+    //  - short gates: in a fast tempo (< 0.28 s per note) spiccato, slower
+    //    a stopped staccato; a short gate on a long note (< 0.18 s) too
+    //  - otherwise detache
+    const bool fast = b.predIoi < 0.28f, veryFast = b.predIoi < 0.11f;
     b.lenClass = !b.nHist || b.connected || duty > 0.9f ? 0
-               : (b.predGate < 0.12f ? 3 : (b.predGate < 0.25f || duty < 0.45f ? 2 : 1));
+               : veryFast ? 3
+               : (duty < 0.55f || b.predGate < 0.18f) ? (fast ? 3 : 2)
+               : 1;
+    // a rest after this note (only known inside a recognised pattern)
+    const float gapPred = b.predIoi - b.predGate;
+    b.phraseEnd = s.patLen && b.nHist && gapPred > 0.25f && gapPred > 0.5f * b.predIoi;
   }
   s.articEff = strArticResolve(s);                          // takes effect on this very note
   // bow energy: a phrase opens a little gentler and grows over its first
@@ -1214,6 +1236,14 @@ static inline void strBrainNote(StringsEngine &s) {
     const int mi = (int)(m + 0.5f);
     if (fabsf(m - (float)mi) < 0.25f && mi % s.barPulses == 0) { b.downBow = true; e *= 1.0f + 0.05f * s.beatW; acc *= 1.0f + 0.25f * s.beatW; }
   }
+  // v1.37: a short or normal note on a heavy beat / phrase start, not in a
+  // fast passage, gets a bitten martele stroke; a phrase-ending note eases
+  if ((b.downBow || newPhrase) && b.nHist && (b.lenClass == 1 || b.lenClass == 2) && b.predIoi >= 0.2f) {
+    b.lenClass = 4; s.articEff = strArticResolve(s);
+  }
+  if (b.phraseEnd) { e *= 0.95f; vib += 0.15f; }
+  // v1.37 tempo: fast notes are attacked crisper, slow ones placed
+  att *= strClamp(sqrtf((b.nHist ? b.predIoi : 0.6f) / 0.5f), 0.65f, 1.15f);
   // expression depth (SPREAD on models without a layout to choose): 0 = a
   // neutral player, 1 = natural default, 2 = twice the shaping
   const float x = s.expr;
@@ -1328,7 +1358,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   if (gate != s.gatePrev) {
     // v1.34 ensemble: player 1 (the concertmaster) leads, the others follow
     // a few ms later; at a phrase start they breathe together (much tighter)
-    const float together = (gate && s.brain.phraseStart) ? 0.4f : 1.0f;
+    // v1.37: in fast passages a section plays tighter (players lock in)
+    const float together = ((gate && s.brain.phraseStart) ? 0.4f : 1.0f) * strClamp(s.noteAhead / 0.4f, 0.3f, 1.0f);
     for (int i = 0; i < STR_VOICES; i++) {
       StrVoice &v = s.v[i];
       const float r = 0.5f + 0.5f * strRand(s);
@@ -1362,11 +1393,12 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         // short notes (fast tempo) and martele: the bow stops on the string,
         // a short bite and the string is damped; long notes: the bow lifts
         // off with a whisper, the string rings on, slower taper for longer notes
-        v.relStop = A.mode == MODE_BOW && (s.noteAhead < 0.35f || s.articEff == ART_MARTELE);
+        v.relStop = A.mode == MODE_BOW && !s.brain.phraseEnd && (s.noteAhead < 0.35f || s.articEff == ART_MARTELE);
         const float releaseEnergy = 0.75f + 0.25f * strClamp(v.vel, 0.0f, 1.0f);
         // Ease the bow away; the string and body then keep their own decay.
         float tau = v.relStop ? (0.065f + 0.025f * (1.0f - releaseEnergy))
                               : strClamp(0.16f + 0.10f * s.noteAhead, 0.16f, 0.32f);
+        if (s.brain.phraseEnd && !v.relStop) tau *= 1.6f;    // v1.37: the end of a phrase rings out
         if (v.family == FAM_CELLO) tau *= 1.18f;
         else if (v.family == FAM_BASS) tau *= 1.25f;
         v.relK = 1.0f / (tau * STR_SR);
@@ -1400,6 +1432,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           const float dynamicTau = 1.18f - 0.32f * strClamp(v.vel, 0.0f, 1.0f);
           const float attackTau = strClamp(familyTau * articulationTau * dynamicTau * s.brain.attackMul, 0.025f, 0.16f);
           v.vibIntent = s.brain.vibIntent; v.vibGrow = 0.0f; v.relRamp = 1.0f;
+          v.vibGrowK = 1.0f / (strClamp(1.1f * s.noteAhead, 0.3f, 1.4f) * STR_SR);   // v1.37: develops over the note
           v.attackK = 1.0f / (attackTau * STR_SR);
           // bow speed from the note length: short notes (fast tempo) fast bow,
           // long notes slow bow (0.6 s = normal)
@@ -1433,7 +1466,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           // Detached/retriggered notes start directly at their target pitch.
           if (!continuing || v.env < 0.05f) v.len = v.lenTarget;
           v.vibAmt = 0;                                       // vibrato starts later:
-          v.vibDelay = (uint32_t)((0.12f + 0.06f * (1.0f + strRand(s))) * STR_SR);   // ~0.12-0.24 s straight tone,
+          // v1.37: the straight tone before the vibrato follows the note length
+          v.vibDelay = (uint32_t)(strClamp(0.22f * s.noteAhead, 0.04f, 0.18f) * (1.0f + 0.3f * strRand(s)) * STR_SR);
           v.vibWarm = 0.75f;                                  // then slower and narrower at first
           v.fingerLen = v.lenTarget;
           if (A.mode == MODE_PLUCK) {                         // pizzicato
@@ -1487,7 +1521,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     }
     v.accent *= A.accentDecay;
     v.pe += (v.peT - v.pe) * 0.0003f;                        // phrase energy glides (~70 ms)
-    if (v.gate && v.vibGrow < 1.0f) v.vibGrow += 1.0f / (1.4f * STR_SR);   // vibrato develops over ~1.4 s
+    if (v.gate && v.vibGrow < 1.0f) v.vibGrow += v.vibGrowK;   // vibrato develops over the note (0.3 ... 1.4 s)
     v.swell += (1.0f - v.swell) * v.swK;
 
     // vibrato: own oscillator, fades in ~0.3 s after the note starts and
