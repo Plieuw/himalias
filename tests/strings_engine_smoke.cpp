@@ -545,8 +545,34 @@ int main() {
     if (endsBad > 1) { std::printf("FAIL phrase end look-ahead (%d ok, %d wrong)\n", endsOk, endsBad); ++fails; }
   }
 
+  // v1.38 humanize: in an ensemble every player has its own timing and
+  // level, the leader stays first, a soloist is untouched
+  {
+    stringsInit(s); s.instrument = MDL_VIOLIN_SECTION; s.rootHz = 440.0f; stringsControl(s);
+    float tmin = 1, tmax = 0, lmin = 9, lmax = 0;
+    for (int i = 1; i < STR_VOICES; ++i) { tmin = std::min(tmin, s.v[i].hTime); tmax = std::max(tmax, s.v[i].hTime);
+                                           lmin = std::min(lmin, s.v[i].hLev);  lmax = std::max(lmax, s.v[i].hLev); }
+    if (!(s.v[0].hTime == 0.0f && tmax - tmin > 0.2f && lmax / lmin > 1.1f && lmax / lmin < 1.45f)) { std::printf("FAIL player personalities\n"); ++fails; }
+    { double lg = 0; for (int i = 0; i < STR_VOICES; ++i) lg += std::log2(s.v[i].hLev);
+      if (std::fabs(lg) > 1e-3) { std::printf("FAIL section level must stay the same on average\n"); ++fails; } }
+    // onsets over many notes: player 1 always first, the others spread, late players stay late on average
+    double sum[STR_VOICES] = {0};
+    for (int k = 0; k < 20; ++k)
+      for (int n = 0; n < 12000; ++n) {
+        if ((n & 127) == 0) stringsControl(s);
+        stringsTick(s, n < 9000);
+        if (n == 0) for (int i = 0; i < STR_VOICES; ++i) sum[i] += s.v[i].onset;
+      }
+    int late = 1; for (int i = 2; i < STR_VOICES; ++i) if (s.v[i].hTime > s.v[late].hTime) late = i;
+    int early = 1; for (int i = 2; i < STR_VOICES; ++i) if (s.v[i].hTime < s.v[early].hTime) early = i;
+    if (!(sum[0] == 0 && sum[late] > sum[early])) { std::printf("FAIL humanized timing\n"); ++fails; }
+    stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.rootHz = 440.0f; stringsControl(s);
+    for (int n = 0; n < 2000; ++n) { if ((n & 127) == 0) stringsControl(s); stringsTick(s, true); }
+    if (std::fabs(s.v[0].gain - 1.0f) > 1e-6f) { std::printf("FAIL soloist humanized\n"); ++fails; }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }
