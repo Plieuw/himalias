@@ -128,6 +128,8 @@ static void seqStep(uint16_t change_adc, bool scaleB);
 #include "strings_engine.h" // bowed strings physical model (v2)
 // v1.43 1V/OCT calibration record (defined up here: the Arduino builder puts
 // its generated function prototypes above the first function)
+#define CAL_MAGIC  0x48535431u      // "HST1"
+struct CalData { uint32_t magic; float zero, cpv; uint32_t check; };
 // v1.55: the calibration lives in an 8 KB flash block reserved inside the
 // firmware itself. v1.43 ... v1.54 read the last block of the flash: on this
 // module that area is not readable (most likely reserved as SmartEEPROM by
@@ -141,8 +143,6 @@ static inline uint32_t calAddr(){
   return a;
 }
 #define CAL_ADDR   calAddr()
-#define CAL_MAGIC  0x48535431u      // "HST1"
-struct CalData { uint32_t magic; float zero, cpv; uint32_t check; };
 StringsEngine strings;
 volatile float vel_inv_top = 1.0f / 1500.0f;  // v1.40: VELOCITY jack scale for the audio interrupt
 volatile uint32_t trig_edges = 0;         // v1.34.2: rising edges on the GATE jack / button
