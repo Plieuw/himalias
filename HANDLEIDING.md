@@ -1,4 +1,4 @@
-# Himalia Strings: handleiding (v1.46)
+# Himalia Strings: handleiding (v1.47)
 
 Firmware voor de IO Instruments Himalia: een fysiek model van gestreken snaren, van solist tot strijkorkest. Elke frase die je erin stuurt, wordt als een uitvoering gespeeld.
 
@@ -118,7 +118,7 @@ In ensembles heeft elke speler een eigen timing en volume. De concertmeester zet
 |---|---|
 | Niets | Normaal spelen, quantizer aan. |
 | **A/B (demper) aan** | Quantizer uit: vrij of microtonaal. |
-| **TRIGGER ingedrukt** | Diagnose: DIVISI OUT = CPU-belasting (0 … +5 V = 0 … 100 %). CLK-LED en DIV TRIG gaan aan als er spelers wegvallen. |
+| **TRIGGER ingedrukt** | Diagnose: DIVISI OUT = CPU-belasting (0 … +5 V = 0 … 100 %). CLK-LED en DIV TRIG gaan aan zolang er dubbelaars spelen. |
 | **TRIGGER ingedrukt + A/B aan** | 1V/OCT-kalibratie (zie hieronder). |
 
 **1V/OCT-kalibreren:**
@@ -131,6 +131,11 @@ De kalibratie blijft bewaard, ook na een firmware-update.
 
 ## 6. Grenzen
 
-- **Rekenkracht.** Een sectie vraagt meer rekenkracht dan de chip per sample heeft. Gemeten op een geëmuleerde Cortex-M4 met `tests/m4bench`: ~3.650 instructies, tegen een budget van ~2.520 cycli. De CPU-bewaking zet dan spelers uit, minimaal 2. Een solist past ruim.
+- **Rekenkracht en dubbelaars.** De chip kan 2–3 volledige strijkers per sample doorrekenen. In een ensemble rekent hij er zoveel volledig door als passen. Welke dat zijn, kiest hij op belang: in het orkest eerst van elke familie één.
+  - De andere spelers worden **dubbelaars**: een vertraagde kopie van een echte speler van dezelfde familie, met eigen timing (3–14 ms), een licht zwevende intonatie, eigen volume en een eigen plek in het stereobeeld.
+  - Je hoort dus altijd het hele ensemble.
+  - Akkoord-layouts houden de tonen van de echte spelers; de dubbelaars verdubbelen die.
+  - In het orkest kan de altviool wegvallen als er maar 3 echte spelers passen.
+  - Gemeten op een geëmuleerde Cortex-M4 (`tests/m4bench`): een sectie met 2 echte spelers en 4 dubbelaars kost ~1.700 instructies per sample, met 3 echte ~2.000. Dat was ~3.900 met 6 echte spelers in v1.45.
 - **ENVELOPE OUT.** Hoe glad deze CV is, hangt af van de filtercondensator op de uitgang. Die waarde is onbekend.
 - **Ruissectie.** De analoge ruissectie en de NOISE TRIG-jack zijn alleen hardware. De firmware leest ze niet.

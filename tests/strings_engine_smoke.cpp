@@ -651,8 +651,31 @@ int main() {
     if (beats < 3 || ends < 3) { std::printf("FAIL DIV TRIG flags (beats %d, phrase ends %d)\n", beats, ends); ++fails; }
   }
 
+  // v1.47 doublers: with fewer real players (CPU guard) a section keeps its
+  // level and its width; a soloist never has doublers
+  {
+    const int ins[3] = { MDL_VIOLIN_SECTION, MDL_FULL_STRINGS, MDL_CELLO_SECTION };
+    for (int k = 0; k < 3; ++k) {
+      double lv[2], wd[2];
+      for (int q = 0; q < 2; ++q) {
+        stringsInit(s); s.instrument = (uint8_t)ins[k]; s.rootHz = 220.0f; s.maxVoices = q ? 3 : STR_VOICES; stringsControl(s);
+        double a = 0, b = 0, d = 0;
+        for (int n = 0; n < 60000; ++n) {
+          if ((n & 127) == 0) stringsControl(s);
+          const float y = stringsTick(s, true);
+          if (n > 20000) { a += (double)y * y; b += (double)s.outDivisi * s.outDivisi; d += (double)(y - s.outDivisi) * (y - s.outDivisi); }
+        }
+        lv[q] = std::sqrt((a + b) / 80000); wd[q] = std::sqrt(d / 40000) / lv[q];
+      }
+      int dbl = 0; for (int i = 0; i < STR_VOICES; ++i) dbl += s.v[i].dbl;
+      const double ddb = 20 * std::log10(lv[1] / lv[0]);
+      std::printf("doublers model %2d: %d doublers, level %+.1f dB, width %.2f -> %.2f\n", ins[k], dbl, ddb, wd[0], wd[1]);
+      if (dbl < 2 || std::fabs(ddb) > 2.0 || wd[1] < 0.4 * wd[0]) { std::printf("FAIL doublers model %d\n", ins[k]); ++fails; }
+    }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM, triggers, model fade, trigger out)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM, triggers, model fade, trigger out, doublers)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

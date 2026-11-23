@@ -88,8 +88,9 @@
 //   - PA22 (DIV TRIG) ............. 5 ms on heavy beats, 25 ms at phrase ends
 //   - LED CLK ..................... blinks on the detected beat
 //   - diagnose: hold TRIGGER while powering up -> divisi out = CPU load
-//                                   (0 ... +5 V = 0 ... 100 %), trigger out high
-//                                   while the CPU guard has dropped players
+//                                   (0 ... +5 V = 0 ... 100 %), CLK LED + trigger
+//                                   out high while doublers play (v1.47: players
+//                                   the CPU cannot compute fully are doublers)
 //   - the digital-noise TRIG jack and the analog noise section are hardware
 //     only: no microcontroller pin reads them (schematic V1.5)
 //
@@ -102,7 +103,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.46.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.47.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -420,6 +421,7 @@ void setup() {
   // never slow the audio interrupt down
   __set_FPSCR(__get_FPSCR() | (1u << 24));
   stringsInit(strings);
+  strings.maxVoices = 3;                     // v1.47: start safe (2-3 real players fit), the guard adjusts
   stringsControl(strings);
   NVIC_SetPriority(TC4_IRQn, 0);             // audio first
   // cycle counter for the CPU load report on the serial monitor
@@ -787,8 +789,9 @@ void renderAudio() {
 
   const uint32_t isr_dt = DWT->CYCCNT - isr_c0;
   if(isr_dt > isr_cycles_max) isr_cycles_max = isr_dt;
-  // CPU guard: close to the time per sample -> drop a player (min 2; a
-  // Cortex-M4 run of the engine showed sections need more than the budget);
+  // CPU guard: close to the time per sample -> one real player less (min 2);
+  // since v1.47 it keeps playing as a doubler (a delayed copy), so an
+  // ensemble always has its 6 players;
   // after ~2 s with room to spare, bring one back
   {
     static uint32_t calm = 0;
