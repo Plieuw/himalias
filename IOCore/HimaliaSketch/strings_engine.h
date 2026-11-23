@@ -433,6 +433,10 @@ struct StringsEngine {
   float fmBow;                    // v1.40: this sample's bow-speed factor (bow FM)
   float fmPress;                  // v1.40: this sample's bow-force factor (bow FM)
   float fmPos;                    // v1.40: this sample's bow-position factor (bow FM)
+  // v1.42 triggers: a pulse shorter than 8 ms is a strike without length;
+  // the note is held for ~80 % of the expected note length
+  uint32_t rawOn, trigHold;       // raw gate start, hold until (0 = no hold)
+  bool     rawPrev, trigGap;      // raw gate last sample, one-sample gap to retrigger
   float noteAhead;                // v1.34: this note's expected length (rhythm pattern look-ahead)
   bool  articLocked;              // v1.34: ARTIC CV patched -> no gate-length articulation
   // tempo from the gates: vibrato and tremolo lock to it
@@ -660,6 +664,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.fmP.lp = s.fmB.lp = 0.0f; s.fmP.g = s.fmB.g = 0.0f; s.fmP.hys = 0.02f; s.fmB.hys = 0.01f;
   s.fmP.n = s.fmB.n = s.fmP.cross = s.fmB.cross = s.fmP.quiet = s.fmB.quiet = 0;
   s.fmP.pos = s.fmB.pos = s.fmP.on = s.fmB.on = false; s.fmRatio = 1.0f; s.fmBow = 1.0f; s.fmPress = 1.0f; s.fmPos = 1.0f;
+  s.rawOn = 0; s.trigHold = 0; s.rawPrev = false; s.trigGap = false;
   s.noteAhead = 0.6f; s.articLocked = false; s.arcMul = s.attackChr = s.beatW = 1.0f; s.beatAnchor = 0; s.barPulses = 0;
   for (int i = 0; i < STR_ONSETS; i++) s.onG[i] = 0;
   s.pulse = 0; s.patLen = 0; s.patPulses = 0; s.beatCand = 0;
@@ -1363,6 +1368,21 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   //      the pulse, the ostinato pattern and the beat from it
   s.now++;
   if (s.sinceGate < 0xFFFFFFF0u) s.sinceGate++;
+  // v1.42: triggers (< 8 ms) are held as notes of ~80 % of the expected length
+  {
+    const bool raw = gate;
+    if (raw && !s.rawPrev) {
+      s.rawOn = s.now;
+      if (s.trigHold) { s.trigHold = 0; s.trigGap = true; }   // a new strike while holding: retrigger
+    }
+    if (!raw && s.rawPrev && s.now - s.rawOn < (uint32_t)(0.008f * STR_SR)) {
+      const float len = s.brain.nHist ? s.brain.predIoi : (s.brain.ioiAvg > 0.05f ? s.brain.ioiAvg : 0.6f);
+      s.trigHold = s.rawOn + (uint32_t)(strClamp(0.8f * len, 0.04f, 2.5f) * STR_SR);
+    }
+    s.rawPrev = raw;
+    if (s.trigHold) { if (s.now < s.trigHold) gate = true; else s.trigHold = 0; }
+    if (s.trigGap) { gate = false; s.trigGap = false; }      // one sample off, then the new note
+  }
   if (gate && !s.gatePrev && s.sinceGate > (uint32_t)(0.03f * STR_SR)) {   // ignore bounces < 30 ms
     if (s.sinceGate > (uint32_t)(3.0f * STR_SR)) s.onN = 0;               // long pause: new rhythm
     // note length for the bowing: the last interval; free playing = normal bow

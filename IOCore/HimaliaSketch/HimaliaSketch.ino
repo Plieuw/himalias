@@ -54,6 +54,11 @@
 //   - A/B button (squares side) ... A = vibrato, B = senza vibrato
 //   - BIT switch .................. tremolo
 //   - A/B button (sample side) .... con sordino (mute)
+//  Quantizer (v1.42): the pitch lands on the nearest semitone once it is
+//  still for ~15 ms (slides and slewed CV pass freely). A/B (mute) on at
+//  power-up = quantizer off (free / microtonal).
+//  Triggers (v1.42): a gate pulse shorter than 8 ms is a strike: the note is
+//  held for ~80 % of the expected note length, the stroke follows the tempo.
 //  Audio rate (v1.41): 1V/OCT and VELOCITY are read every sample (47.6 kHz,
 //  usable up to ~20 kHz; 1 of 8 samples extrapolated while a knob is read). An
 //  audio-rate signal on them (>= ~40 Hz, found automatically) modulates:
@@ -84,7 +89,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.41.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.42.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -115,6 +120,7 @@ volatile bool strings_cv_bow = false;     // CV IN RATE patched and above ~0.25 
 // output gives the CPU load as a voltage (0 ... +5 V = 0 ... 100 %), the
 // trigger out is high while the CPU guard has dropped players
 volatile bool  diag_mode = false;
+bool           quant_on  = true;   // v1.42: pitch lands on semitones (A/B switch on at power-up = off)
 volatile float diag_load = 0.0f;           // peak load, falls back in ~0.5 s
 /*
 
@@ -363,6 +369,7 @@ void setup() {
   pinMode(PB23,INPUT_PULLUP); // Manual Trigger
   delay(20);                                  // let the pull-ups settle
   diag_mode = !(PORT->Group[PORTB].IN.reg & (1ul << 16));   // TRIGGER button held at power-up
+  quant_on  =  (PORT->Group[PORTA].IN.reg & (1ul << 20));   // v1.42: A/B (mute) on at power-up = quantizer off
   
 
   // v1.40 (after the pinMode()s, which would take the pins off the ADC)
@@ -769,6 +776,21 @@ void loop() {
   if(sample_pitch_jack < CV_UNPATCHED)                   // with audio-rate FM: only its slow part
     pitch_oct += strings.fmP.on ? strings.fmP.lp : cvVolts(sample_pitch_jack);
   float hz = PITCH_LOW_HZ * exp2f(pitch_oct);
+  // v1.42 quantizer, the way a player finds the note: while the pitch moves
+  // (a slide, a slewed CV, turning the knob) it follows freely; once it has
+  // been still for ~15 ms the intonation settles on the nearest semitone
+  // (A = 440 Hz) within ~20 ms. Exact CV is not changed audibly, an
+  // unquantized source (LFO, random) plays notes. Off: A/B on at power-up.
+  if(quant_on){
+    static float q_prev = 0.0f, q_w = 0.0f;
+    static uint32_t q_still = 0;
+    const uint32_t qms = millis();
+    if(fabsf(pitch_oct - q_prev) * 12.0f > 0.12f){ q_still = qms; q_prev = pitch_oct; }
+    q_w += ((qms - q_still > 15 ? 1.0f : 0.0f) - q_w) * 0.15f;
+    const float semis = 12.0f * log2f(hz * (1.0f / 440.0f));
+    const float off = semis - floorf(semis + 0.5f);
+    hz *= exp2f(-off * q_w * (1.0f / 12.0f));
+  }
   if(hz < 20.0f)   hz = 20.0f;
   if(hz > 3500.0f) hz = 3500.0f;
   strings.rootHz = hz;

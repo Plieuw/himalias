@@ -159,6 +159,7 @@ int main() {
     stringsControl(s);
     if (!render(true, 1, x)) ++fails;
     const float celloAttackK = s.v[0].attackK;
+    if (!render(true, 500, x)) ++fails;                     // a real gate (> 8 ms), not a trigger
     if (!render(false, 1, x)) ++fails;
     const float celloReleaseK = s.v[0].relK;
     if (!(celloAttackK < violinAttackK && celloReleaseK < violinReleaseK)) {
@@ -601,8 +602,27 @@ int main() {
     std::printf("bow FM sideband x%.1f (%.1f dB under the total)\n", e[1] / e[0], -20 * std::log10(e[1] * 2));
   }
 
+  // v1.42 triggers: a 5 ms pulse plays a note of ~85 % of the expected
+  // length; the articulation then follows the tempo
+  {
+    struct Tc { int P; uint8_t want; const char *name; };
+    const Tc tc[] = { { 24000, ART_DETACHE, "triggers at 0.5 s -> detache" }, { 4800, ART_SPICCATO, "triggers at 0.1 s -> spiccato" } };
+    for (const Tc &c : tc) {
+      stringsInit(s); s.instrument = MDL_SOLO_VIOLIN; s.artic = ART_AUTO; s.rootHz = 440.0f; stringsControl(s);
+      float held = 0; int cnt[ART_COUNT] = {0};
+      for (int n = 0; n < 12 * c.P; ++n) {
+        if ((n & 127) == 0) stringsControl(s);
+        stringsTick(s, (n % c.P) < 240);
+        if (n >= 6 * c.P && n % c.P == c.P / 2) held += s.v[0].gate ? 1.0f : 0.0f;
+        if (n >= 4 * c.P && n % c.P == 300) cnt[s.articEff]++;
+      }
+      int best = 0; for (int a = 1; a < ART_COUNT; ++a) if (cnt[a] > cnt[best]) best = a;
+      if (held < 5.0f || best != c.want) { std::printf("FAIL %s (held %.0f/6, got %d)\n", c.name, held, best); ++fails; }
+    }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM, triggers)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }
