@@ -762,7 +762,7 @@ static inline void stringsInit(StringsEngine &s) {
   s.noteDur = 0.6f;                 // free playing: a normal bow
   s.sinceGate = (uint32_t)(5.0f * STR_SR); s.clockPeriod = 0;   // the first gate counts too
   s.now = 0; s.onW = 0; s.onN = 0; s.onCount = 0; s.onSeen = 0;
-  s.fmP.lp = s.fmB.lp = 0.0f; s.fmP.g = s.fmB.g = 0.0f; s.fmP.hys = 0.02f; s.fmB.hys = 0.01f;
+  s.fmP.lp = s.fmB.lp = 0.0f; s.fmP.g = s.fmB.g = 0.0f; s.fmP.hys = 0.15f; s.fmB.hys = 0.04f;   // v1.56: well above the ADC noise (0.02 V was ~4 counts: noise switched pitch FM on -> grain)
   s.fmP.n = s.fmB.n = s.fmP.cross = s.fmB.cross = s.fmP.quiet = s.fmB.quiet = 0;
   s.fmP.pos = s.fmB.pos = s.fmP.on = s.fmB.on = false; s.fmRatio = 1.0f; s.fmBow = 1.0f; s.fmPress = 1.0f; s.fmPos = 1.0f;
   s.curModel = 0; s.xf = s.xfTarget = 1.0f; s.trigOut = 0;
