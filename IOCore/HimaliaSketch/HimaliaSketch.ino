@@ -126,6 +126,11 @@ static void seqStep(uint16_t change_adc, bool scaleB);
 // the audio path is built for speed; the Arduino core keeps its size optimisation
 #pragma GCC optimize ("O2")
 #include "strings_engine.h" // bowed strings physical model (v2)
+// v1.43 1V/OCT calibration record (defined up here: the Arduino builder puts
+// its generated function prototypes above the first function)
+#define CAL_ADDR   0x000FE000u
+#define CAL_MAGIC  0x48535431u      // "HST1"
+struct CalData { uint32_t magic; float zero, cpv; uint32_t check; };
 StringsEngine strings;
 volatile float vel_inv_top = 1.0f / 1500.0f;  // v1.40: VELOCITY jack scale for the audio interrupt
 volatile uint32_t trig_edges = 0;         // v1.34.2: rising edges on the GATE jack / button
@@ -584,9 +589,6 @@ static inline float cvVolts(uint16_t adc) {
 //   gate LED on for 1 s = saved; both LEDs flicker = out of range, not saved
 //  Without a (valid) calibration the values from the schematic are used.
 //
-#define CAL_ADDR   0x000FE000u
-#define CAL_MAGIC  0x48535431u      // "HST1"
-struct CalData { uint32_t magic; float zero, cpv; uint32_t check; };
 float cal_zero = CV_ZERO_ADC, cal_cpv = CV_COUNTS_PER_VOLT;   // 1V/OCT jack only
 
 static uint32_t calCheck(const CalData &c){
