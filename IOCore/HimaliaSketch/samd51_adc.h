@@ -106,28 +106,45 @@ class SAMD51_ADC {
     startSyncConversion();
   };
 
-  // --- v1.40: the audio interrupt owns both ADCs (no blocking reads) ---
-  // Every tick it picks up the conversion started the tick before and
-  // starts the next one. Even ticks: the audio-rate channel (ADC0 VELOCITY,
-  // ADC1 1V/OCT, 23.8 kHz each); odd ticks: the other channels in turn
-  // (ADC0: 5 channels at ~4.8 kHz, ADC1: 3 channels at ~7.9 kHz). loop()
-  // only reads the cached values, so it never stalls the audio.
+  // --- v1.41: the audio interrupt owns both ADCs (no blocking reads) ---
+  // Every tick, at the very start of the interrupt (timer driven, so no
+  // timing jitter), it picks up the conversion started one tick earlier and
+  // starts the next. 7 of every 8 ticks: the audio-rate input (ADC0 VELOCITY,
+  // ADC1 1V/OCT); the 8th tick: the next knob / CV in turn (~1.2 kHz per
+  // knob on ADC0, ~2 kHz on ADC1). On a knob tick the audio input is
+  // extrapolated from its last two values. loop() only reads the cache.
+  // ADC clock 12 MHz (was 1.5): sampling time stays 4 us (the same accuracy,
+  // the same min / max readings as before), plus 2x averaging (12-bit result,
+  // same scale); one conversion ~10 us, well inside one tick (21 us).
   static const uint8_t N0 = 5, N1 = 3;
   uint8_t  ch0[N0 + 1], ch1[N1 + 1];          // [0] = audio-rate channel
   volatile uint16_t val0[N0 + 1], val1[N1 + 1];
-  uint8_t  cur0 = 0, cur1 = 0, rot0 = 1, rot1 = 1;
-  bool     scanRunning = false, tick = false;
+  uint8_t  cur0 = 0, cur1 = 0, rot0 = 1, rot1 = 1, k8 = 0;
+  bool     scanRunning = false;
   volatile uint16_t fast0 = 0, fast1 = 2028;  // audio-rate values (VELOCITY, 1V/OCT)
+  uint16_t prev0 = 0, prev1 = 2028;
 
   static void adcEnable(Adc *adc){
     adc->CTRLA.bit.ENABLE = 0x01;
     while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE );
   }
-  static void adcStart(Adc *adc, uint8_t channel){
+  static void adcSelect(Adc *adc, uint8_t channel){
     while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL );
     adc->INPUTCTRL.bit.MUXPOS = channel;
     while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL );
-    adc->SWTRIG.bit.START = 1;
+  }
+  static void adcFast(Adc *adc){
+    adc->CTRLA.bit.ENABLE = 0;
+    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE );
+    adc->CTRLA.bit.PRESCALER = ADC_CTRLA_PRESCALER_DIV4_Val;   // 48 MHz / 4 = 12 MHz
+    adc->SAMPCTRL.reg = 47;                                     // 48 clocks = 4 us sampling (as before)
+    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_SAMPCTRL );
+    adc->AVGCTRL.reg = ADC_AVGCTRL_SAMPLENUM_2 | ADC_AVGCTRL_ADJRES(1);   // mean of 2, 12-bit
+    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_AVGCTRL );
+    adcEnable(adc);
+  }
+  static inline uint16_t extrap(uint16_t a, uint16_t b){       // 2a - b, clamped
+    int v = 2 * (int)a - (int)b; return (uint16_t)(v < 0 ? 0 : (v > 4095 ? 4095 : v));
   }
 
   // pins[0] / chans[0] are the audio-rate inputs
@@ -135,27 +152,41 @@ class SAMD51_ADC {
     for(int i = 0; i <= N0; i++){ pinPeripheral(pins0[i], PIO_ANALOG); ch0[i] = chans0[i]; val0[i] = 0; }
     for(int i = 0; i <= N1; i++){ pinPeripheral(pins1[i], PIO_ANALOG); ch1[i] = chans1[i]; val1[i] = 0; }
     adcEnable(ADC0); adcEnable(ADC1);
-    // fill the cache once with blocking reads, then hand over to the interrupt
+    // fill the cache once with blocking reads (old clock), then speed up
     for(int i = 0; i <= N0; i++) val0[i] = readAnalog(pins0[i], ch0[i], false);
     for(int i = 0; i <= N1; i++) val1[i] = readAnalog(pins1[i], ch1[i], true);
-    fast0 = val0[0]; fast1 = val1[0];
-    cur0 = 0; cur1 = 0; tick = false;
-    adcStart(ADC0, ch0[0]); adcStart(ADC1, ch1[0]);
+    fast0 = prev0 = val0[0]; fast1 = prev1 = val1[0];
+    adcFast(ADC0); adcFast(ADC1);
+    cur0 = 0; cur1 = 0; k8 = 0;
+    adcSelect(ADC0, ch0[0]); ADC0->SWTRIG.bit.START = 1;
+    adcSelect(ADC1, ch1[0]); ADC1->SWTRIG.bit.START = 1;
     scanRunning = true;
   }
 
   // first thing in the audio interrupt
   inline void isrPoll(){
     if(!scanRunning) return;
-    if(ADC0->INTFLAG.bit.RESRDY){ const uint16_t r = ADC0->RESULT.reg; val0[cur0] = r; if(cur0 == 0) fast0 = r; }
-    if(ADC1->INTFLAG.bit.RESRDY){ const uint16_t r = ADC1->RESULT.reg; val1[cur1] = r; if(cur1 == 0) fast1 = r; }
-    tick = !tick;
-    if(tick){                                   // odd tick: the next slow channel
+    // the conversions started one tick ago
+    if(ADC0->INTFLAG.bit.RESRDY){
+      const uint16_t r = ADC0->RESULT.reg;
+      if(cur0 == 0){ prev0 = fast0; fast0 = r; } else { val0[cur0] = r; const uint16_t e = extrap(fast0, prev0); prev0 = fast0; fast0 = e; }
+    }
+    if(ADC1->INTFLAG.bit.RESRDY){
+      const uint16_t r = ADC1->RESULT.reg;
+      if(cur1 == 0){ prev1 = fast1; fast1 = r; } else { val1[cur1] = r; const uint16_t e = extrap(fast1, prev1); prev1 = fast1; fast1 = e; }
+    }
+    // the next ones: a knob on every 8th tick, otherwise the audio input
+    k8 = (k8 + 1) & 7;
+    if(k8 == 7){
       cur0 = rot0; rot0 = rot0 >= N0 ? 1 : rot0 + 1;
       cur1 = rot1; rot1 = rot1 >= N1 ? 1 : rot1 + 1;
-    } else { cur0 = 0; cur1 = 0; }              // even tick: the audio-rate channels
-    adcStart(ADC0, ch0[cur0]);
-    adcStart(ADC1, ch1[cur1]);
+      adcSelect(ADC0, ch0[cur0]); adcSelect(ADC1, ch1[cur1]);
+    } else if(k8 == 0){
+      cur0 = 0; cur1 = 0;
+      adcSelect(ADC0, ch0[0]); adcSelect(ADC1, ch1[0]);
+    }
+    ADC0->SWTRIG.bit.START = 1;
+    ADC1->SWTRIG.bit.START = 1;
   }
 
   // see how to compute: https://electronics.stackexchange.com/questions/278050/making-voltmeter-accepting-bipolar-input-voltage-using-a-microcontroller

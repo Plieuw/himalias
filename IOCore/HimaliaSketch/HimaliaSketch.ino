@@ -54,7 +54,8 @@
 //   - A/B button (squares side) ... A = vibrato, B = senza vibrato
 //   - BIT switch .................. tremolo
 //   - A/B button (sample side) .... con sordino (mute)
-//  Audio rate (v1.40): 1V/OCT and VELOCITY are read every sample. An
+//  Audio rate (v1.41): 1V/OCT and VELOCITY are read every sample (47.6 kHz,
+//  usable up to ~20 kHz; 1 of 8 samples extrapolated while a knob is read). An
 //  audio-rate signal on them (>= ~40 Hz, found automatically) modulates:
 //  1V/OCT = pitch FM (1 V = an octave), VELOCITY = bow FM (bow speed through
 //  zero, force and contact point: growl, creak, sidebands). Slow CV and
@@ -83,7 +84,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.40.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.41.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
