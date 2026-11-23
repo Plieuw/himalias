@@ -571,8 +571,38 @@ int main() {
     if (std::fabs(s.v[0].gain - 1.0f) > 1e-6f) { std::printf("FAIL soloist humanized\n"); ++fails; }
   }
 
+  // v1.40 audio-rate FM: an audio-rate signal modulates, a sequencer step
+  // or slow CV does not; FM changes the spectrum
+  {
+    StrFm f; f.lp = 0; f.g = 0; f.hys = 0.05f; f.n = f.cross = f.quiet = 0; f.pos = f.on = false;
+    float maxStep = 0;
+    for (int n = 0; n < 48000; ++n) { const float x = (n / 6000) % 2 ? 1.0f : 0.0f; maxStep = std::max(maxStep, std::fabs(strFmRun(f, x))); }
+    if (f.on || maxStep > 0.01f) { std::printf("FAIL FM: sequencer steps leak (%.3f)\n", maxStep); ++fails; }
+    float maxSine = 0;
+    for (int n = 0; n < 24000; ++n) maxSine = std::max(maxSine, std::fabs(strFmRun(f, 0.5f * std::sin(6.2831853f * 220.0f * n / STR_SR))));
+    if (!f.on || maxSine < 0.4f) { std::printf("FAIL FM: audio-rate not detected (%.3f)\n", maxSine); ++fails; }
+    // through the engine: bow FM at 110 Hz changes the tone, then dies out
+    double e[2];
+    for (int k = 0; k < 2; ++k) {
+      stringsInit(s); s.instrument = MDL_SOLO_CELLO; s.artic = ART_LEGATO; s.rootHz = 130.8f; stringsControl(s);
+      std::vector<float> o;
+      for (int n = 0; n < 48000; ++n) {
+        if ((n & 127) == 0) stringsControl(s);
+        stringsFmInput(s, 0.0f, 0.5f + (k ? 0.3f * std::sin(6.2831853f * 110.0f * n / STR_SR) : 0.0f));
+        o.push_back(stringsTick(s, true));
+      }
+      // sideband energy at f0 + 110 Hz (Goertzel), relative to the total
+      const double w = 6.2831853 * (130.8 + 110.0) / STR_SR, c = 2 * std::cos(w);
+      double q1 = 0, q2 = 0;
+      for (unsigned n = 30000; n < 48000; ++n) { const double q0 = o[n] + c * q1 - q2; q2 = q1; q1 = q0; }
+      e[k] = std::sqrt(q1 * q1 + q2 * q2 - c * q1 * q2) / 18000.0 / rms(o, 30000, 48000);
+    }
+    if (!(e[1] > 2.5 * e[0])) { std::printf("FAIL bow FM has no effect (%.2f)\n", e[1] / e[0]); ++fails; }
+    std::printf("bow FM sideband x%.1f (%.1f dB under the total)\n", e[1] / e[0], -20 * std::log10(e[1] * 2));
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

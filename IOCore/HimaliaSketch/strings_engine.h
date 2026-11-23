@@ -353,6 +353,32 @@ struct StrBrain {
   uint8_t  velN;                  // v1.36: notes in velAvg
 };
 
+// v1.40 audio-rate modulation. An input is read every sample; its fast part
+// (above ~30 Hz) modulates, but only while there really is an audio-rate
+// signal (zero crossings in a 50 ms window), so sequencer steps and slow
+// CV never leak into it -- they keep going through the normal control path
+#define STR_FM_WIN 2381        // 50 ms
+struct StrFm {
+  float lp;                    // slow part (~30 Hz)
+  float g;                     // modulation depth fade (0 ... 1)
+  float hys;                   // zero-crossing hysteresis (input units)
+  uint16_t n, cross, quiet;    // window counter, crossings, quiet windows
+  bool  pos, on;
+};
+static inline float strFmRun(StrFm &f, float x) {
+  f.lp += (x - f.lp) * 0.004f;                          // ~30 Hz
+  const float h = x - f.lp;
+  if (f.pos ? h < -f.hys : h > f.hys) { f.pos = !f.pos; f.cross++; }
+  if (++f.n >= STR_FM_WIN) {
+    if (f.cross >= 4) { f.on = true; f.quiet = 0; }      // >= 40 Hz for a whole window
+    else if (f.cross < 2 && ++f.quiet >= 2) f.on = false;
+    f.n = 0; f.cross = 0;
+  }
+  f.g += ((f.on ? 1.0f : 0.0f) - f.g) * 0.002f;          // ~10 ms fade in / out
+  if (!f.on && f.g < 1e-4f) { f.g = 0.0f; return 0.0f; }  // off: no cost downstream
+  return h * f.g;
+}
+
 struct StringsEngine {
   StrVoice v[STR_VOICES];
   StrMode body[STR_FAMILIES][STR_BODY_MODES];      // divisi players (2 ... 6)
@@ -402,6 +428,11 @@ struct StringsEngine {
   float velocity;                 // dynamic gate level (1 = normal), sampled per note
   float noteDur;                  // expected note length (s): time between the last gates
   float arcMul, attackChr, beatW;  // v1.35: playing character (long arc, attack, heavy-beat weight)
+  StrFm fmP, fmB;                 // v1.40: pitch FM (1V/OCT, volts), bow FM (VELOCITY, 0 ... 1)
+  float fmRatio;                  // v1.40: this sample's frequency ratio (pitch FM)
+  float fmBow;                    // v1.40: this sample's bow-speed factor (bow FM)
+  float fmPress;                  // v1.40: this sample's bow-force factor (bow FM)
+  float fmPos;                    // v1.40: this sample's bow-position factor (bow FM)
   float noteAhead;                // v1.34: this note's expected length (rhythm pattern look-ahead)
   bool  articLocked;              // v1.34: ARTIC CV patched -> no gate-length articulation
   // tempo from the gates: vibrato and tremolo lock to it
@@ -516,6 +547,19 @@ static const int8_t STR_DIVISI_MAJOR[8] = { 0, 4, 7, 12, 16, 19, -5, 24 };
 static const int8_t STR_DIVISI_MINOR[8] = { 0, 3, 7, 12, 15, 19, -5, 24 };
 
 // ------------------------------------------------------------------ init
+// v1.40: feed this sample's audio-rate inputs (call before stringsTick).
+// pitchV: 1V/OCT jack in volts; bowN: VELOCITY jack, 0 ... 1 of its range
+static inline void stringsFmInput(StringsEngine &s, float pitchV, float bowN) {
+  const float hp = strClamp(strFmRun(s.fmP, pitchV), -3.0f, 3.0f);   // 1 V = an octave, +-3 octaves
+  s.fmRatio = hp == 0.0f ? 1.0f : exp2f(hp);
+  const float hb = strFmRun(s.fmB, bowN);
+  // the bow is pushed and pressed at audio rate: speed through zero (the
+  // bow reverses) and force (the grip breaks up): growl, creak, sidebands
+  s.fmBow = strClamp(1.0f + 1.2f * hb, -0.5f, 2.5f);
+  s.fmPress = strClamp(1.0f - 1.5f * hb, 0.3f, 3.0f);
+  s.fmPos = strClamp(1.0f + 1.0f * hb, 0.4f, 2.0f);          // the contact point moves: the spectrum sweeps
+}
+
 // v1.38: the section as a whole keeps its level: the players' own levels,
 // note levels and drifts are spread around 1 (geometric mean = 1)
 static inline void strHumanizeMean(StringsEngine &s, int which) {
@@ -613,6 +657,9 @@ static inline void stringsInit(StringsEngine &s) {
   s.noteDur = 0.6f;                 // free playing: a normal bow
   s.sinceGate = (uint32_t)(5.0f * STR_SR); s.clockPeriod = 0;   // the first gate counts too
   s.now = 0; s.onW = 0; s.onN = 0; s.onCount = 0; s.onSeen = 0;
+  s.fmP.lp = s.fmB.lp = 0.0f; s.fmP.g = s.fmB.g = 0.0f; s.fmP.hys = 0.02f; s.fmB.hys = 0.01f;
+  s.fmP.n = s.fmB.n = s.fmP.cross = s.fmB.cross = s.fmP.quiet = s.fmB.quiet = 0;
+  s.fmP.pos = s.fmB.pos = s.fmP.on = s.fmB.on = false; s.fmRatio = 1.0f; s.fmBow = 1.0f; s.fmPress = 1.0f; s.fmPos = 1.0f;
   s.noteAhead = 0.6f; s.articLocked = false; s.arcMul = s.attackChr = s.beatW = 1.0f; s.beatAnchor = 0; s.barPulses = 0;
   for (int i = 0; i < STR_ONSETS; i++) s.onG[i] = 0;
   s.pulse = 0; s.patLen = 0; s.patPulses = 0; s.beatCand = 0;
@@ -1543,11 +1590,13 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // rougher while the string length changes fastest
     const float vibRel = v.vibAmt * 100.0f;
     const float roll = vibRel * (v.vc < 0 ? -v.vc : v.vc);
-    const float L = v.len * (1.0f + v.vibAmt * vibShape);
+    float L = v.len * (1.0f + v.vibAmt * vibShape) / s.fmRatio;     // v1.40: pitch FM
+    if (L > (float)(STR_NECK_LEN - 8)) L = (float)(STR_NECK_LEN - 8);
+    if (L < 8.0f) L = 8.0f;
 
     // bow position splits the string: bridge side beta, nut side 1 - beta
     // slow bow plays closer to the bridge, fast bow further away
-    float beta = s.beta * (0.8f + 0.2f * v.bowMul);
+    float beta = s.beta * (0.8f + 0.2f * v.bowMul) * s.fmPos;
     float lb = L * beta;
     if (lb > (float)(STR_BRIDGE_LEN - 4)) lb = (float)(STR_BRIDGE_LEN - 4);
     if (lb < 1.5f) lb = 1.5f;
@@ -1575,7 +1624,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // gives each stroke a different bite without changing its pitch or timing.
       const float bowDirection = (v.dir > 0.0f) ? 1.005f : 0.995f;
       float bv = bowMax * A.speed * v.speedScale * v.env * v.swell * (1.0f + v.accent)
-               * v.dir * v.bowMul * bowDirection * v.pe;
+               * v.dir * v.bowMul * bowDirection * v.pe * s.fmBow;   // v1.40: bow FM
       // long notes: when the bow runs out the player changes bow: slows down,
       // turns (scratch) and speeds up again, ~90 ms. Every player has their
       // own bow length, so a section changes bow at different moments
@@ -1611,7 +1660,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // the same bow force on a slower bow presses relatively harder: keep it
       // in the clean (Helmholtz) range
       const float bowPressure = (v.dir > 0.0f) ? 0.998f : 1.002f;
-      float sl = (v.slBase - 2.5f * v.accent * A.bite) * bowPressure;
+      float sl = (v.slBase - 2.5f * v.accent * A.bite) * bowPressure * s.fmPress;
       if (sl < STR_SL_MIN) sl = STR_SL_MIN;
       float t = dv * sl + 0.001f;
       t = (t < 0 ? -t : t) + 0.75f;

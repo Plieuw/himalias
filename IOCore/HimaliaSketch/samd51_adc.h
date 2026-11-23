@@ -53,6 +53,7 @@ class SAMD51_ADC {
   uint16_t readAnalog(uint16_t pin, uint16_t channel , bool adc_alt){
     pinPeripheral(pin, PIO_ANALOG);
     if(adc_alt){
+      // (only used before beginScan(); afterwards the interrupt owns ADC1)
       while( ADC1->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL ); //wait for sync
       ADC1->INPUTCTRL.bit.MUXPOS = channel; // Selection for the positive ADC input
       while( ADC1->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE ); //wait for sync
@@ -104,6 +105,58 @@ class SAMD51_ADC {
     syncRunning = true;
     startSyncConversion();
   };
+
+  // --- v1.40: the audio interrupt owns both ADCs (no blocking reads) ---
+  // Every tick it picks up the conversion started the tick before and
+  // starts the next one. Even ticks: the audio-rate channel (ADC0 VELOCITY,
+  // ADC1 1V/OCT, 23.8 kHz each); odd ticks: the other channels in turn
+  // (ADC0: 5 channels at ~4.8 kHz, ADC1: 3 channels at ~7.9 kHz). loop()
+  // only reads the cached values, so it never stalls the audio.
+  static const uint8_t N0 = 5, N1 = 3;
+  uint8_t  ch0[N0 + 1], ch1[N1 + 1];          // [0] = audio-rate channel
+  volatile uint16_t val0[N0 + 1], val1[N1 + 1];
+  uint8_t  cur0 = 0, cur1 = 0, rot0 = 1, rot1 = 1;
+  bool     scanRunning = false, tick = false;
+  volatile uint16_t fast0 = 0, fast1 = 2028;  // audio-rate values (VELOCITY, 1V/OCT)
+
+  static void adcEnable(Adc *adc){
+    adc->CTRLA.bit.ENABLE = 0x01;
+    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE );
+  }
+  static void adcStart(Adc *adc, uint8_t channel){
+    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL );
+    adc->INPUTCTRL.bit.MUXPOS = channel;
+    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL );
+    adc->SWTRIG.bit.START = 1;
+  }
+
+  // pins[0] / chans[0] are the audio-rate inputs
+  void beginScan(const uint16_t *pins0, const uint8_t *chans0, const uint16_t *pins1, const uint8_t *chans1){
+    for(int i = 0; i <= N0; i++){ pinPeripheral(pins0[i], PIO_ANALOG); ch0[i] = chans0[i]; val0[i] = 0; }
+    for(int i = 0; i <= N1; i++){ pinPeripheral(pins1[i], PIO_ANALOG); ch1[i] = chans1[i]; val1[i] = 0; }
+    adcEnable(ADC0); adcEnable(ADC1);
+    // fill the cache once with blocking reads, then hand over to the interrupt
+    for(int i = 0; i <= N0; i++) val0[i] = readAnalog(pins0[i], ch0[i], false);
+    for(int i = 0; i <= N1; i++) val1[i] = readAnalog(pins1[i], ch1[i], true);
+    fast0 = val0[0]; fast1 = val1[0];
+    cur0 = 0; cur1 = 0; tick = false;
+    adcStart(ADC0, ch0[0]); adcStart(ADC1, ch1[0]);
+    scanRunning = true;
+  }
+
+  // first thing in the audio interrupt
+  inline void isrPoll(){
+    if(!scanRunning) return;
+    if(ADC0->INTFLAG.bit.RESRDY){ const uint16_t r = ADC0->RESULT.reg; val0[cur0] = r; if(cur0 == 0) fast0 = r; }
+    if(ADC1->INTFLAG.bit.RESRDY){ const uint16_t r = ADC1->RESULT.reg; val1[cur1] = r; if(cur1 == 0) fast1 = r; }
+    tick = !tick;
+    if(tick){                                   // odd tick: the next slow channel
+      cur0 = rot0; rot0 = rot0 >= N0 ? 1 : rot0 + 1;
+      cur1 = rot1; rot1 = rot1 >= N1 ? 1 : rot1 + 1;
+    } else { cur0 = 0; cur1 = 0; }              // even tick: the audio-rate channels
+    adcStart(ADC0, ch0[cur0]);
+    adcStart(ADC1, ch1[cur1]);
+  }
 
   // see how to compute: https://electronics.stackexchange.com/questions/278050/making-voltmeter-accepting-bipolar-input-voltage-using-a-microcontroller
   float voltageDivider(float vIn){

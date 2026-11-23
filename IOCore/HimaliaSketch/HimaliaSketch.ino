@@ -54,6 +54,11 @@
 //   - A/B button (squares side) ... A = vibrato, B = senza vibrato
 //   - BIT switch .................. tremolo
 //   - A/B button (sample side) .... con sordino (mute)
+//  Audio rate (v1.40): 1V/OCT and VELOCITY are read every sample. An
+//  audio-rate signal on them (>= ~40 Hz, found automatically) modulates:
+//  1V/OCT = pitch FM (1 V = an octave), VELOCITY = bow FM (bow speed through
+//  zero, force and contact point: growl, creak, sidebands). Slow CV and
+//  sequencer steps are untouched and work as before.
 //  Himalia reads every phrase as a performance (HAESE): phrase shape, a long
 //  arc over 8 phrases, heavy beats on a down-bow, the bow divided over the
 //  expected note length, a section that follows its leader.
@@ -78,7 +83,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.39.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.40.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -102,6 +107,7 @@ static void seqStep(uint16_t change_adc, bool scaleB);
 #pragma GCC optimize ("O2")
 #include "strings_engine.h" // bowed strings physical model (v2)
 StringsEngine strings;
+volatile float vel_inv_top = 1.0f / 1500.0f;  // v1.40: VELOCITY jack scale for the audio interrupt
 volatile uint32_t trig_edges = 0;         // v1.34.2: rising edges on the GATE jack / button
 volatile bool strings_cv_bow = false;     // CV IN RATE patched and above ~0.25 V
 // Diagnose mode (hold the TRIGGER button while powering up): the divisi
@@ -358,6 +364,19 @@ void setup() {
   diag_mode = !(PORT->Group[PORTB].IN.reg & (1ul << 16));   // TRIGGER button held at power-up
   
 
+  // v1.40 (after the pinMode()s, which would take the pins off the ADC)
+  // audio-rate inputs: the audio interrupt samples the VELOCITY jack
+  // (ADC0) and the 1V/OCT jack (ADC1) every tick
+  // and scans every other knob / CV in between, so loop() never waits on
+  // an ADC and never holds up the audio
+  {
+    static const uint16_t p0[6] = { PB01, PB02, PA07, PB03, PB09, PA06 };
+    static const uint8_t  c0[6] = { ADC_Channel13, ADC_Channel14, ADC_Channel7, ADC_Channel15, ADC_Channel3, ADC_Channel6 };
+    static const uint16_t p1[4] = { PB06, PB04, PB07, PB05 };
+    static const uint8_t  c1[4] = { ADC_Channel8, ADC_Channel6, ADC_Channel9, ADC_Channel7 };
+    adc51.beginScan(p0, c0, p1, c1);
+  }
+
   // create Time for AudioSamples
   zt4.configure(TC_CLOCK_PRESCALER_DIV8, // prescaler
                 TC_COUNTER_SIZE_8BIT,   // bit width of timer/counter
@@ -517,8 +536,17 @@ static uint16_t selectHyst(int32_t v, int32_t lo, int32_t hi, int32_t maxStep, u
 //
 volatile uint32_t isr_cycles_max = 0;      // worst audio interrupt time (CPU load check)
 
+#define CV_ZERO_ADC        2028.0f   // ADC reading at 0 V
+#define CV_COUNTS_PER_VOLT  208.9f   // ADC steps per volt
+#define CV_UNPATCHED        4090     // reading of an unpatched (normalled) jack
+
+static inline float cvVolts(uint16_t adc) {
+  return ((float)adc - CV_ZERO_ADC) * (1.0f / CV_COUNTS_PER_VOLT);
+}
+
 void renderAudio() {
   const uint32_t isr_c0 = DWT->CYCCNT;
+  adc51.isrPoll();                                         // v1.40: audio-rate VELOCITY + 1V/OCT
   //  PORT->Group[PORTA].OUTSET.reg = 1ul << 22;
 
   ++audio_tick;
@@ -567,6 +595,13 @@ void renderAudio() {
 
   {
     // Six-voice bowed-string engine; mono sum goes to SAMPLE OUT.
+    // v1.40 audio-rate FM: 1V/OCT -> pitch FM, VELOCITY -> bow FM; only
+    // active while an audio-rate signal is there (slow CV is untouched)
+    {
+      const uint16_t pj = adc51.fast1, vj = adc51.fast0;
+      stringsFmInput(strings, pj < CV_UNPATCHED ? cvVolts(pj) : 0.0f,
+                     vj < SYNC_UNPATCHED ? (float)vj * vel_inv_top : 0.0f);
+    }
     float out = stringsTick(strings, gate);
 
     // LED CLK: blinks on the beat the rhythm analysis found (also with
@@ -648,19 +683,13 @@ void renderAudio() {
 //  The values below come from the resistor values in the schematic; measure
 //  your module with the serial monitor (115200 baud, see below) to fine tune.
 //
-#define CV_ZERO_ADC        2028.0f   // ADC reading at 0 V
-#define CV_COUNTS_PER_VOLT  208.9f   // ADC steps per volt
-#define CV_UNPATCHED        4090     // reading of an unpatched (normalled) jack
-
-static inline float cvVolts(uint16_t adc) {
-  return ((float)adc - CV_ZERO_ADC) * (1.0f / CV_COUNTS_PER_VOLT);
-}
+//  (CV_ZERO_ADC, CV_COUNTS_PER_VOLT and cvVolts() are defined above renderAudio)
 
 void loop() {
 
   // ---- bow speed: CLOCK RATE knob, CV IN RATE as expression
-  uint16_t bow_speed_adc = adc51.readAnalog(PB02,ADC_Channel14,false);
-  uint16_t bow_cv_adc    = adc51.readAnalog(PB01,ADC_Channel13,false);
+  uint16_t bow_speed_adc = adc51.val0[1];
+  uint16_t bow_cv_adc    = adc51.fast0;                  // v1.40: audio-rate, from the interrupt
   strings.speed = (float)bow_speed_adc * (1.0f / 4095.0f);
   // CV IN RATE = dynamic gate / bow CV: the level is how hard the bow plays,
   // 0 ... 10 V = soft ... full (linear). Above ~0.4 V it is also a gate: plays
@@ -677,12 +706,14 @@ void loop() {
   static bool     cv_rate_patched = false;
   static uint32_t cv_rate_low_ms  = 0;
   static float    cv_rate_top     = 1500.0f;            // auto range (ADC counts)
+  vel_inv_top = 1.0f / cv_rate_top;                     // v1.40: for the bow FM in the interrupt
   const uint32_t now_ms = millis();
   float rate_lvl;                                        // 0 ... 1
   if(bow_cv_adc < SYNC_UNPATCHED){
     cv_rate_patched = true;
     cv_rate_low_ms  = now_ms;
-    const float a = (float)bow_cv_adc;
+    // v1.40: with bow FM running, only the slow part is the velocity
+    const float a = strings.fmB.on ? strings.fmB.lp * cv_rate_top : (float)bow_cv_adc;
     if(a > cv_rate_top) cv_rate_top = a;
     else cv_rate_top += (1500.0f - cv_rate_top) * 0.00002f;   // forget a peak over ~minutes, never below 1500
     rate_lvl = a / cv_rate_top;
@@ -726,16 +757,16 @@ void loop() {
   }
 
   // ---- pitch: SAMPLE TUNE knob + CV (1 V/oct)
-  uint16_t sample_pitch_poti = adc51.readAnalog(PA07,ADC_Channel7,false);
-  uint16_t sample_pitch_jack = adc51.readAnalog(PB06,ADC_Channel8,true);   // ADC1 AIN8 = PB06
+  uint16_t sample_pitch_poti = adc51.val0[2];
+  uint16_t sample_pitch_jack = adc51.fast1;               // v1.40: sampled by the audio interrupt (PB06)
   // the knob spans the real range of the instrument: fully left = its lowest
   // open string (violin G3, viola C3, cello C2, bass E1), fully right = its
   // top note; the CV adds 1 V/oct (0 V = the knob's note)
   float PITCH_LOW_HZ, PITCH_OCTAVES;
   stringsPitchRange(strings.v[0].family, PITCH_LOW_HZ, PITCH_OCTAVES);
   float pitch_oct = (float)sample_pitch_poti * (PITCH_OCTAVES / 4095.0f);
-  if(sample_pitch_jack < CV_UNPATCHED)
-    pitch_oct += cvVolts(sample_pitch_jack);
+  if(sample_pitch_jack < CV_UNPATCHED)                   // with audio-rate FM: only its slow part
+    pitch_oct += strings.fmP.on ? strings.fmP.lp : cvVolts(sample_pitch_jack);
   float hz = PITCH_LOW_HZ * exp2f(pitch_oct);
   if(hz < 20.0f)   hz = 20.0f;
   if(hz > 3500.0f) hz = 3500.0f;
@@ -745,8 +776,8 @@ void loop() {
   //      in playing order: AUTO (the gate length decides), portamento, legato,
   //      detache, martele, staccato, spiccato, pizzicato, then the tone colours
   //      soft -> harsh: flageolet, sul tasto, sul ponticello, col legno
-  uint16_t art_poti = adc51.readAnalog(PB03,ADC_Channel15,false);
-  uint16_t art_jack = adc51.readAnalog(PB04,ADC_Channel6,true);
+  uint16_t art_poti = adc51.val0[3];
+  uint16_t art_jack = adc51.val1[1];
   // knob picks the articulation, the CV adds 1 V per articulation step (so a
   // sequencer can step through them); 0 V / unpatched = the knob's choice
   static uint16_t art_state = 0;
@@ -759,8 +790,8 @@ void loop() {
   strings.articLocked = art_cv;                                   // an explicit CV wins over the gate length
 
   // ---- bow pressure: SAMPLE SELECT knob + CV
-  uint16_t cv_sample_select_adc = adc51.readAnalog(PB09,ADC_Channel3,false);
-  uint16_t select_adc = adc51.readAnalog(PA06,ADC_Channel6,false);
+  uint16_t cv_sample_select_adc = adc51.val0[4];
+  uint16_t select_adc = adc51.val0[5];
   float pr = (float)((int32_t)select_adc - 310) * (1.0f / (3750.0f - 310.0f));
   if(cv_sample_select_adc < 4000) pr += cvVolts(cv_sample_select_adc) * 0.1f;
   if(pr < 0.0f) pr = 0.0f;
@@ -774,10 +805,10 @@ void loop() {
   strings.vibrato =  (PORT->Group[PORTA].IN.reg & (1ul << 21)) != 0;
 
   // ---- instrument (RATCHET) and layout (SPREAD), with hysteresis
-  uint16_t ins_adc = adc51.readAnalog(PB07,ADC_Channel9,true);
+  uint16_t ins_adc = adc51.val1[2];
   static uint16_t ins_state = 0;
   const uint8_t ins = (uint8_t)selectHyst(ins_adc, 300, 3750, INS_COUNT - 1, ins_state);
-  uint16_t lay_adc = adc51.readAnalog(PB05,ADC_Channel7,true);
+  uint16_t lay_adc = adc51.val1[3];
   static uint16_t lay_state = 0;
   strings.layout = (uint8_t)selectHyst(lay_adc, 250, 3700, LAY_COUNT - 1, lay_state);
   {                                                    // continuous: expression depth / widths
