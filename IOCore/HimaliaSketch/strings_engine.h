@@ -41,13 +41,6 @@
 #define STR_BRIDGE_LEN 512           // bridge side segment (bow position <= 0.3)
 #define STR_FAMILIES   4
 #define STR_BODY_MODES 6
-#ifndef STR_OVR_GRIP
-#define STR_OVR_GRIP 1.0f      // overpressure: bow speed boost on the driven period
-#define STR_OVR_FREE 0.85f     // ... and cut on the others (octave down)
-#endif
-#ifndef STR_OVR_FREE3
-#define STR_OVR_FREE3 0.95f    // ... (octave + fifth down)
-#endif
 #ifndef STR_SL_MIN
 #define STR_SL_MIN 0.6f
 #endif
@@ -156,38 +149,35 @@ struct StrModelDef {
   float   vibDepth;   // vibrato depth multiplier
   float   vibRate;    // vibrato rate multiplier
   float   swell;      // seconds for a note to swell to full bow (0 = off)
-  int8_t  trill;      // trill interval in semitones (0 = off)
   float   accent;     // accent multiplier
   float   tight;      // onset spread multiplier (ensemble timing)
   float   ring;       // ring-out multiplier (short = punchy)
   float   gain;       // level (short low notes need more)
-  float   over;       // overpressure (0 = off): crunch, PRESSURE knob picks subharmonics
-  float   swarm;      // Threnody swarm: players glide apart into a quarter-tone cluster (semitones, 0 = off)
   uint8_t chr;        // playing character (adaptive playing)
 };
 static const StrModelDef STR_MODELS[MDL_COUNT] = {
-  //  base               art layout trem vibD   vibR   swell trill accent tight  ring  gain    over  swarm character
-  { INS_SOLO_VIOLIN,     -1, -1,   -1, 0.85f, 1.00f, 0.0f, 0,  1.00f, 0.80f, 1.0f, 0.850f, 0.0f, 0.0f, CHR_CLASSICAL },  // solo violin, classical
-  { INS_SOLO_VIOLIN,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0,  0.85f, 1.15f, 1.0f, 1.091f, 0.0f, 0.0f, CHR_ROMANTIC },  // solo violin, romantic
-  { INS_SOLO_VIOLIN,     -1, -1,   -1, 1.10f, 1.00f, 0.9f, 0,  1.30f, 1.00f, 1.0f, 1.074f, 0.0f, 0.0f, CHR_FILM },  // solo violin, film
-  { INS_SOLO_CELLO,      -1, -1,   -1, 0.85f, 1.00f, 0.0f, 0,  1.00f, 0.80f, 1.0f, 1.071f, 0.0f, 0.0f, CHR_CLASSICAL },  // solo cello, classical
-  { INS_SOLO_CELLO,      -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0,  0.85f, 1.15f, 1.0f, 1.378f, 0.0f, 0.0f, CHR_ROMANTIC },  // solo cello, romantic
-  { INS_SOLO_CELLO,      -1, -1,   -1, 1.10f, 1.00f, 0.9f, 0,  1.30f, 1.00f, 1.0f, 1.285f, 0.0f, 0.0f, CHR_FILM },  // solo cello, film
-  { INS_VIOLIN_SECTION,  -1, -1,   -1, 0.85f, 1.00f, 0.0f, 0,  1.00f, 0.80f, 1.0f, 0.981f, 0.0f, 0.0f, CHR_CLASSICAL },  // violin section, classical
-  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0,  0.85f, 1.15f, 1.0f, 1.190f, 0.0f, 0.0f, CHR_ROMANTIC },  // violin section, romantic
-  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.10f, 1.00f, 0.9f, 0,  1.30f, 1.00f, 1.0f, 1.193f, 0.0f, 0.0f, CHR_FILM },  // violin section, film
-  { INS_VIOLA_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 0,  1.00f, 0.80f, 1.0f, 1.052f, 0.0f, 0.0f, CHR_CLASSICAL },  // viola section, classical
-  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0,  0.85f, 1.15f, 1.0f, 1.093f, 0.0f, 0.0f, CHR_ROMANTIC },  // viola section, romantic
-  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 0,  1.30f, 1.00f, 1.0f, 1.229f, 0.0f, 0.0f, CHR_FILM },  // viola section, film
-  { INS_CELLO_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 0,  1.00f, 0.80f, 1.0f, 1.616f, 0.0f, 0.0f, CHR_CLASSICAL },  // cello section, classical
-  { INS_CELLO_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0,  0.85f, 1.15f, 1.0f, 2.008f, 0.0f, 0.0f, CHR_ROMANTIC },  // cello section, romantic
-  { INS_CELLO_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 0,  1.30f, 1.00f, 1.0f, 1.922f, 0.0f, 0.0f, CHR_FILM },  // cello section, film
-  { INS_LOW_STRINGS,     -1, -1,   -1, 0.85f, 1.00f, 0.0f, 0,  1.00f, 0.80f, 1.0f, 1.329f, 0.0f, 0.0f, CHR_CLASSICAL },  // celli + basses, classical
-  { INS_LOW_STRINGS,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0,  0.85f, 1.15f, 1.0f, 1.726f, 0.0f, 0.0f, CHR_ROMANTIC },  // celli + basses, romantic
-  { INS_LOW_STRINGS,     -1, -1,   -1, 1.10f, 1.00f, 0.9f, 0,  1.30f, 1.00f, 1.0f, 1.727f, 0.0f, 0.0f, CHR_FILM },  // celli + basses, film
-  { INS_FULL_STRINGS,    -1, -1,   -1, 0.85f, 1.00f, 0.0f, 0,  1.00f, 0.80f, 1.0f, 0.945f, 0.0f, 0.0f, CHR_CLASSICAL },  // full strings, classical
-  { INS_FULL_STRINGS,    -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0,  0.85f, 1.15f, 1.0f, 1.235f, 0.0f, 0.0f, CHR_ROMANTIC },  // full strings, romantic
-  { INS_FULL_STRINGS,    -1, -1,   -1, 1.10f, 1.00f, 0.9f, 0,  1.30f, 1.00f, 1.0f, 1.383f, 0.0f, 0.0f, CHR_FILM },  // full strings, film
+  //  base               art layout trem vibD   vibR   swell accent tight  ring  gain    character
+  { INS_SOLO_VIOLIN,     -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 0.850f, CHR_CLASSICAL },  // solo violin, classical
+  { INS_SOLO_VIOLIN,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.091f, CHR_ROMANTIC },  // solo violin, romantic
+  { INS_SOLO_VIOLIN,     -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.074f, CHR_FILM },  // solo violin, film
+  { INS_SOLO_CELLO,      -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.071f, CHR_CLASSICAL },  // solo cello, classical
+  { INS_SOLO_CELLO,      -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.378f, CHR_ROMANTIC },  // solo cello, romantic
+  { INS_SOLO_CELLO,      -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.285f, CHR_FILM },  // solo cello, film
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 0.981f, CHR_CLASSICAL },  // violin section, classical
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.190f, CHR_ROMANTIC },  // violin section, romantic
+  { INS_VIOLIN_SECTION,  -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.193f, CHR_FILM },  // violin section, film
+  { INS_VIOLA_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.052f, CHR_CLASSICAL },  // viola section, classical
+  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.093f, CHR_ROMANTIC },  // viola section, romantic
+  { INS_VIOLA_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.229f, CHR_FILM },  // viola section, film
+  { INS_CELLO_SECTION,   -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.616f, CHR_CLASSICAL },  // cello section, classical
+  { INS_CELLO_SECTION,   -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 2.008f, CHR_ROMANTIC },  // cello section, romantic
+  { INS_CELLO_SECTION,   -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.922f, CHR_FILM },  // cello section, film
+  { INS_LOW_STRINGS,     -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 1.329f, CHR_CLASSICAL },  // celli + basses, classical
+  { INS_LOW_STRINGS,     -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.726f, CHR_ROMANTIC },  // celli + basses, romantic
+  { INS_LOW_STRINGS,     -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.727f, CHR_FILM },  // celli + basses, film
+  { INS_FULL_STRINGS,    -1, -1,   -1, 0.85f, 1.00f, 0.0f, 1.00f, 0.80f, 1.0f, 0.945f, CHR_CLASSICAL },  // full strings, classical
+  { INS_FULL_STRINGS,    -1, -1,   -1, 1.35f, 0.92f, 0.4f, 0.85f, 1.15f, 1.0f, 1.235f, CHR_ROMANTIC },  // full strings, romantic
+  { INS_FULL_STRINGS,    -1, -1,   -1, 1.10f, 1.00f, 0.9f, 1.30f, 1.00f, 1.0f, 1.383f, CHR_FILM },  // full strings, film
 };
 
 // noise transient per articulation: bow scratch at the start of a stroke,
@@ -242,6 +232,7 @@ struct StrVoice {
   float fingerLen;                // stopped string length the finger is on
   float tremPh, tremInc;          // tremolo bow strokes
   float speedScale, pressOffs;    // this player's bow
+  float slBase;                   // v1.39: friction slope without the accent (control rate)
   float detune;                   // static intonation (ratio)
   float drift, driftTarget;       // slow intonation drift (cents)
   // v1.38 humanize (ensembles): every player has a personality
@@ -273,8 +264,6 @@ struct StrVoice {
   float bowLenInv;                // 1 / (bowLen * sample rate)
   uint32_t turn;                  // samples left in a bow change
   float slip;                     // last friction state (0 = stick, 1 = slip)
-  float alfT;                     // overpressure: time in string periods (0 ... div)
-  float swarmT;                   // this player's place in the swarm cluster (-1 ... 1)
   // note off: the released note keeps its pitch; the bow stops on the string
   // (short notes) or lifts off (long notes); later the finger lifts
   float lenNext, ringNext, openNext;   // targets for the next note (from control)
@@ -376,13 +365,9 @@ struct StringsEngine {
   StrSym sym[2];                  // sympathetic strings: player 1, divisi
   StrBrain brain;                 // HAESE: interpretation of the gate / pitch phrase
   // knobs a model does not need get a model-specific job (v1.33)
-  float knobArt;                  // SQUARES MAIN TUNE knob + CV, 0 ... 1
   float knobSpread;               // SPREAD knob + CV, 0 ... 1
   float expr;                     // expression depth: 0 neutral, 1 natural, 2 very expressive
-  float swarmW;                   // Threnody swarm width (semitones)
-  float clusterW;                 // suspense: cluster width factor (0 = off)
-  float glideMul, tremMul, strokeMul, accentMul, swellMul;
-  uint8_t trillMode;              // 1 = semitone, 2 = whole tone, 3 = minor third
+  float glideMul;                 // playing character: shift / portamento time
   struct Lim { float d[STR_LIM_LOOK]; float pk, g; uint8_t w, hold; } lim[2];   // safety net
   float tuneRatio;                // how far the pitch CV sits from A = 440 (the open strings follow)
   // control (written from loop)
@@ -397,8 +382,6 @@ struct StringsEngine {
   bool  mute;                     // con sordino
   uint8_t artic;
   uint8_t maxVoices;              // CPU guard: the firmware lowers this when the audio interrupt gets too slow
-  float trillPh, trillInc;        // trill (alternating upper note)
-  bool  trillPrev;                // trill state last sample (finger taps)
   StrModelDef model;              // current model (copied by stringsControl)
   uint8_t articEff;               // articulation in use (model or knob)
   uint8_t instrument, layout;
@@ -602,15 +585,10 @@ static inline void stringsInit(StringsEngine &s) {
     v.bowMul = 1.0f; v.bowGain = 1.0f; v.slMul = 1.0f; v.bowUsed = 0.0f; v.bowLen = 3.0f * (0.85f + 0.3f * (0.5f + 0.5f * strRand(s)));
     v.bowLenInv = 1.0f / (v.bowLen * STR_SR);
     v.turn = 0; v.slip = 0.0f; v.tBp1 = v.tBp2 = 0.0f;
-    v.alfT = 0.0f;
     v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = v.slideOpen = 0.0f; v.slideSemis = 0.0f;
     v.attackK = 1.0f / (0.075f * STR_SR);
-    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.vibGrowK = 1.0f / (1.4f * STR_SR); v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f;
+    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.vibGrowK = 1.0f / (1.4f * STR_SR); v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f; v.slBase = 1.0f;
     v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
-    {                                                        // quarter-tone places, spread over the players
-      static const float places[STR_VOICES] = { 0.125f, -0.5f, 0.75f, -1.0f, 0.375f, -0.25f };
-      v.swarmT = places[i];
-    }
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
     v.ringLoss = 0.99f;
     v.hz = 220.0f;
@@ -640,10 +618,9 @@ static inline void stringsInit(StringsEngine &s) {
   s.pulse = 0; s.patLen = 0; s.patPulses = 0; s.beatCand = 0;
   strHumanizeInit(s); s.vibHz = 0; s.tremHz = 6.5f;
   s.instrument = MDL_SOLO_VIOLIN; s.layout = LAY_UNISON; s.maxVoices = STR_VOICES;
-  s.trillPh = 0; s.trillInc = 9.0f / STR_SR; s.trillPrev = false;
   s.model = STR_MODELS[0]; s.articEff = ART_LEGATO;
-  s.knobArt = 0.5f; s.knobSpread = 0.5f; s.expr = 1.0f; s.swarmW = 0.0f; s.clusterW = 0.0f;
-  s.glideMul = s.tremMul = s.strokeMul = s.accentMul = s.swellMul = 1.0f; s.trillMode = 0;
+  s.knobSpread = 0.5f; s.expr = 1.0f;
+  s.glideMul = 1.0f;
   s.divisiMask = 0x3F;
   s.tuneRatio = 1.0f;
   for (int k = 0; k < 2; k++) {
@@ -881,9 +858,7 @@ static inline void stringsControl(StringsEngine &s) {
     const float sp = strClamp(s.knobSpread, 0.0f, 1.0f);
     s.expr = (solo ? 2.0f * sp : 1.0f) * C.expr;
     s.arcMul = C.arc; s.attackChr = C.attack; s.beatW = C.beat;
-    s.swarmW = 0.0f; s.clusterW = 0.0f;
-    s.glideMul = C.glide; s.tremMul = s.strokeMul = s.accentMul = s.swellMul = 1.0f;
-    s.trillMode = M.trill;
+    s.glideMul = C.glide;
   }
   // the PRESSURE knob is the playing zone, contact point and force together
   // like a player uses them: left = over the fingerboard with a light bow
@@ -901,7 +876,7 @@ static inline void stringsControl(StringsEngine &s) {
   // the CLOCK RATE knob: bow speed on a log scale like real bow speeds,
   // ~9 cm/s (fully left) ... ~25 cm/s (centre) ... ~70 cm/s (fully right)
   s.bowBase = 0.04f * powf(8.0f, strClamp(s.speed, 0.0f, 1.0f));
-  s.swellK = M.swell > 0 ? 1.0f / (M.swell * s.swellMul * STR_SR) : 1.0f;
+  s.swellK = M.swell > 0 ? 1.0f / (M.swell * STR_SR) : 1.0f;
   // the force is relative to the playable (Helmholtz) window, which moves
   // with the contact point and the bow speed like on a real instrument
   // (Schelleng): over the fingerboard a light bow, near the bridge more force
@@ -932,18 +907,6 @@ static inline void stringsControl(StringsEngine &s) {
   const float adaptiveDrive = strClamp(0.45f * s.speed + 0.35f * s.pressure
                                       + 0.20f * strClamp(s.velocity / 1.25f, 0.0f, 1.0f), 0.0f, 1.0f);
   const float adaptiveNoteRate = sqrtf(strClamp(0.6f / strClamp(s.noteDur, 0.08f, 2.5f), 0.5f, 1.5f));
-  // ---- trill: ~9 alternations per second, on the tempo when there is a clock
-  {
-    float th = 9.0f;
-    if (s.clockPeriod) {
-      const float bh = STR_SR / (float)s.clockPeriod;
-      static const float tm[6] = { 2.0f, 3.0f, 4.0f, 6.0f, 8.0f, 12.0f };
-      float best = 9.0f, d = 1e9f;
-      for (int k = 0; k < 6; k++) { const float e = fabsf(logf(bh * tm[k] / 9.0f)); if (e < d) { d = e; best = bh * tm[k]; } }
-      if (d < 0.6f) th = best;
-    }
-    s.trillInc = 0.5f * th / STR_SR;                          // one cycle = two notes
-  }
   int nActive = 0;
   for (int i = 0; i < STR_VOICES; i++) {
     StrVoice &v = s.v[i];
@@ -971,7 +934,7 @@ static inline void stringsControl(StringsEngine &s) {
     // Tremolo bow strokes adapt to bow speed, pressure, dynamics and note spacing.
     // No beat subdivision or BPM locking: the hand's motion drives the rate.
     const float tremRate = (4.5f + 3.5f * adaptiveDrive) * adaptiveNoteRate * v.vibRateMul;
-    v.tremInc = tremRate * s.tremMul / STR_SR;
+    v.tremInc = tremRate / STR_SR;
     v.vibDepth = STR_VIB_DEPTH[fam] * v.vibDepthMul * M.vibDepth * (0.4f + 0.6f * s.expr);
     // finger travel (was per sample): interval, phrase length and playing
     // energy shape the glide; the cello's finger has more weight
@@ -1017,6 +980,7 @@ static inline void stringsControl(StringsEngine &s) {
       // v1.36 velocity colours the tone too: hard = more grip (bright,
       // biting), soft = lighter grip (round, dark); no CV (1.0) = unchanged
       v.atSl = exp2f(-2.0f * v.at - 0.6f * (strClamp(v.vel, 0.0f, 1.3f) - 1.0f));
+      v.slBase = s.slope * v.slMul * v.atSl + v.pressOffs * 4.0f - 0.6f * (v.vel - 1.0f);   // per-sample friction uses this
       v.atLev = 1.0f + 0.35f * v.at;                        // ~+1.3 dB per volt-ish of pressing
       v.atVib = 1.0f + (v.at > 0.0f ? 0.9f * v.at : 0.4f * v.at);
     }
@@ -1026,17 +990,7 @@ static inline void stringsControl(StringsEngine &s) {
     strRand(s);
     v.drift += (v.driftTarget - v.drift) * 0.002f;
 
-    float swarmSemis = 0.0f;
-    if (M.swarm > 0.0f) {
-      // Threnody swarm: from the note the players glide apart into a
-      // quarter-tone cluster and back together (cycle ~12 s from every gate)
-      const float t = (float)s.sinceGate / STR_SR;
-      float ph = t / 12.0f; ph -= floorf(ph);
-      const float spread = 0.5f - 0.5f * cosf(6.2831853f * ph);
-      swarmSemis = spread * s.swarmW * v.swarmT;
-    }
-    if (s.clusterW > 0.0f) swarmSemis += (float)semis * (s.clusterW - 1.0f);  // suspense: cluster width
-    float hz = s.rootHz * exp2f(((float)semis + swarmSemis) / 12.0f);
+    float hz = s.rootHz * exp2f((float)semis / 12.0f);
     while (hz < STR_FAMILY_LOW[fam]) hz *= 2.0f;            // keep it on the instrument
     while (hz > STR_FAMILY_HIGH[fam] * 1.02f) hz *= 0.5f;
     if (!solo) hz *= v.detune;
@@ -1358,18 +1312,6 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   const StrModelDef &M = s.model;
   const bool solo = (M.ins == INS_SOLO_VIOLIN || M.ins == INS_SOLO_VIOLA || M.ins == INS_SOLO_CELLO);
   const bool trem = M.trem > 0 ? true : (M.trem == 0 ? false : s.tremolo);
-  // trill: the upper note shortens the string
-  bool trillUp = false;
-  if (M.trill) {
-    s.trillPh += s.trillInc;
-    if (s.trillPh >= 1.0f) s.trillPh -= 1.0f;
-    trillUp = s.trillPh >= 0.5f;
-  }
-  if (s.trillMode && trillUp != s.trillPrev) {                // trill: every finger hit / lift taps
-    for (int i = 0; i < STR_VOICES; i++) if (s.v[i].active && s.v[i].env > 0.2f) s.v[i].tran += (trillUp ? 0.018f : 0.009f) * (0.55f + 0.45f * strClamp(s.v[i].vel, 0.0f, 1.0f));
-    s.trillPrev = trillUp;
-  }
-  const float trillRatio = s.trillMode == 3 ? 0.8408964f : (s.trillMode == 2 ? 0.8908987f : (s.trillMode == 1 ? 0.9438743f : 1.0f));
   // ---- tempo: log every gate start (time + velocity); stringsTempo() finds
   //      the pulse, the ostinato pattern and the beat from it
   s.now++;
@@ -1418,12 +1360,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
   }
 
   const float bowMax = s.bowBase * s.speedCV;
-  // overpressure: PRESSURE knob picks crunch / octave down / twelfth down;
-  // the weakly driven periods lose level, give it back
-  const int ovrDiv = M.over > 0.0f ? (s.pressure > 0.75f ? 3 : (s.pressure > 0.4f ? 2 : 1)) : 1;
-  const float ovrGain = ovrDiv == 3 ? 2.0f : (ovrDiv == 2 ? 1.6f : 1.0f);
   const StrArticDef &A = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : (uint8_t)ART_LEGATO];
-  const uint32_t strokeMax = (uint32_t)(A.stroke * s.strokeMul * STR_SR);
+  const uint32_t strokeMax = (uint32_t)(A.stroke * STR_SR);
   float famBus[STR_FAMILIES]  = { 0, 0, 0, 0 };   // divisi players
   float leadBus = 0.0f;                              // player 1
   uint8_t leadFam = s.v[0].family;
@@ -1495,7 +1433,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
           // slow ~-2 dB, fast ~+2 dB against a normal bow (measured)
           v.bowGain = v.bowMul < 1.0f ? 1.0f - 0.96f * (1.0f - v.bowMul) : 1.0f;
           v.slMul = powf(v.bowMul, -0.6f);                     // the same Schelleng scaling per note
-          v.accent = A.accent * M.accent * s.accentMul * STR_VEL_ACC(v.vel) * s.brain.accent;
+          v.slBase = s.slope * v.slMul * v.atSl + v.pressOffs * 4.0f - 0.6f * (v.vel - 1.0f);
+          v.accent = A.accent * M.accent * STR_VEL_ACC(v.vel) * s.brain.accent;
           // swell: long notes start soft and grow over ~1/3 of their expected
           // length (at most the model's swell time), short notes do not swell
           v.swell = (M.swell > 0 && s.noteAhead > 0.5f) ? 0.3f : 1.0f;
@@ -1604,7 +1543,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // rougher while the string length changes fastest
     const float vibRel = v.vibAmt * 100.0f;
     const float roll = vibRel * (v.vc < 0 ? -v.vc : v.vc);
-    const float L = v.len * (1.0f + v.vibAmt * vibShape) * (trillUp ? trillRatio : 1.0f);
+    const float L = v.len * (1.0f + v.vibAmt * vibShape);
 
     // bow position splits the string: bridge side beta, nut side 1 - beta
     // slow bow plays closer to the bridge, fast bow further away
@@ -1666,32 +1605,14 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // friction: stick while the velocity difference is small, slip above.
       // The accent bites in with extra pressure (martele).
       bv *= 1.0f + 0.04f * vibRel * v.vc;                  // the bow arm moves with the hand
-      if (M.over > 0.0f) {
-        // overpressure (ALF): the heavy bow creaks: it drives one of every
-        // 2 or 3 string periods hard and the others weakly, locked to the
-        // string, so the motion only repeats every 2 / 3 periods (an octave /
-        // an octave + fifth below). PRESSURE knob: < 0.4 crunch only,
-        // 0.4 ... 0.75 octave down, above 0.75 twelfth down
-        const int div = ovrDiv;
-        if (div > 1) {
-          v.alfT += 1.0f / L;
-          if (v.alfT >= (float)div) v.alfT -= (float)div;
-          const float cut = div == 2 ? STR_OVR_FREE : STR_OVR_FREE3;
-          bv *= (v.alfT < 1.0f) ? 1.0f + STR_OVR_GRIP * M.over : 1.0f - cut * M.over;
-        }
-      }
       // the noise comes with the slip: when the string slides under the
       // hair (once per period), not as constant hiss
       const float dv = bv - stringVel + nz * s.bowNoise * (0.35f + 1.6f * v.slip) * (1.0f + 2.5f * roll) * (bv < 0 ? -bv : bv);
       // the same bow force on a slower bow presses relatively harder: keep it
       // in the clean (Helmholtz) range
       const float bowPressure = (v.dir > 0.0f) ? 0.998f : 1.002f;
-      float sl = (s.slope * v.slMul * v.atSl + v.pressOffs * 4.0f - 2.5f * v.accent * A.bite
-                - 0.6f * (v.vel - 1.0f)) * bowPressure;
-      if (M.over > 0.0f) {
-        sl -= 0.6f * M.over;                                 // overpressure: heavy bow
-        if (sl < 0.15f) sl = 0.15f;
-      } else if (sl < STR_SL_MIN) sl = STR_SL_MIN;
+      float sl = (v.slBase - 2.5f * v.accent * A.bite) * bowPressure;
+      if (sl < STR_SL_MIN) sl = STR_SL_MIN;
       float t = dv * sl + 0.001f;
       t = (t < 0 ? -t : t) + 0.75f;
       t = t * t; t = t * t;                                  // ^4
@@ -1734,7 +1655,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     // dynamics: the string alone follows the bow speed unevenly from note to
     // note; a player also uses force and contact point, so the note level
     // follows the dynamic gate too (1 = no dynamic gate = unchanged)
-    const float dyn = v.gain * v.bowGain * ovrGain * STR_VEL_LEV(v.vel) * v.levComp * v.atLev;
+    const float dyn = v.gain * v.bowGain * STR_VEL_LEV(v.vel) * v.levComp * v.atLev;
     if (i == 0) leadBus = radiated * dyn;                    // force on the bridge
     else        famBus[v.family] += radiated * dyn;
   }

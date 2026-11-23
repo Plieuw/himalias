@@ -22,8 +22,7 @@
 //                                   divisi major, divisi minor, cluster; models
 //                                   without a layout to choose: expression depth
 //                                   (left neutral, centre natural, right very
-//                                   expressive); Threnody: swarm width; suspense:
-//                                   cluster width
+//                                   expressive)
 //  2. HOW it is played
 //   - SQUARES MAIN TUNE knob + CV . articulation, long -> short, then tone colour
 //                                   soft -> harsh: AUTO, portamento, legato,
@@ -35,9 +34,7 @@
 //                                   detache ... spiccato also follow the gate
 //                                   length around the chosen stroke. CV: 1 V = one
 //                                   step from the knob (a patched CV = exactly that
-//                                   articulation). Models with a fixed articulation:
-//                                   a gesture (slide time, tremolo speed, trill
-//                                   interval, stroke length, accent, swell time)
+//                                   articulation)
 //   - SAMPLE SELECT knob + CV ..... playing zone: contact point and force together
 //                                   (left = fingerboard, soft and dark; centre =
 //                                   normal; right = near the bridge, loud and
@@ -81,7 +78,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.38.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.39.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -760,13 +757,6 @@ void loop() {
   if(art > ART_KNOB_STEPS - 1) art = ART_KNOB_STEPS - 1;
   strings.artic = art == 0 ? (uint8_t)ART_AUTO : (uint8_t)(art - 1);
   strings.articLocked = art_cv;                                   // an explicit CV wins over the gate length
-  // the same knob + CV as a continuous value (1 V = 10 %): models that fix
-  // their articulation use it for a gesture of their own
-  {
-    float ka = (float)art_poti * (1.0f / 4095.0f);
-    if(art_jack < 4000) ka += cvVolts(art_jack) * 0.1f;
-    strings.knobArt = ka < 0.0f ? 0.0f : (ka > 1.0f ? 1.0f : ka);
-  }
 
   // ---- bow pressure: SAMPLE SELECT knob + CV
   uint16_t cv_sample_select_adc = adc51.readAnalog(PB09,ADC_Channel3,false);
