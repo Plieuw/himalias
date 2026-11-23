@@ -103,7 +103,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.53.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.54.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -128,7 +128,16 @@ static void seqStep(uint16_t change_adc, bool scaleB);
 #include "strings_engine.h" // bowed strings physical model (v2)
 // v1.43 1V/OCT calibration record (defined up here: the Arduino builder puts
 // its generated function prototypes above the first function)
-#define CAL_ADDR   0x000FE000u
+// v1.54: the calibration lives in the last 8 KB block of the flash this
+// chip really has (NVMCTRL reports it). v1.43 ... v1.53 used a fixed
+// address for 1 MB: on a chip with less flash that read faulted at
+// power-up (no sound, USB gone).
+static inline uint32_t calAddr(){
+  const uint32_t size = (uint32_t)NVMCTRL->PARAM.bit.NVMP * 512u;   // pages x 512 bytes
+  if(size < 0x20000u || size > 0x100000u) return 0;                // unknown: no calibration
+  return size - 0x2000u;
+}
+#define CAL_ADDR   calAddr()
 #define CAL_MAGIC  0x48535431u      // "HST1"
 struct CalData { uint32_t magic; float zero, cpv; uint32_t check; };
 StringsEngine strings;
@@ -598,6 +607,7 @@ static uint32_t calCheck(const CalData &c){
 static void nvmWait(){ while(!NVMCTRL->STATUS.bit.READY); }
 static void nvmCmd(uint32_t cmd){ NVMCTRL->CTRLB.reg = NVMCTRL_CTRLB_CMDEX_KEY | cmd; nvmWait(); }
 static void calSave(const CalData &c){
+  if(!CAL_ADDR) return;
   __disable_irq();
   nvmWait();
   NVMCTRL->ADDR.reg = CAL_ADDR;
@@ -614,6 +624,7 @@ static void calSave(const CalData &c){
   __enable_irq();
 }
 static void calLoad(){
+  if(!CAL_ADDR) return;
   CalData c; memcpy(&c, (const void *)CAL_ADDR, sizeof c);
   if(c.magic == CAL_MAGIC && c.check == calCheck(c) && c.cpv > 150.0f && c.cpv < 270.0f
      && c.zero > 1700.0f && c.zero < 2350.0f){ cal_zero = c.zero; cal_cpv = c.cpv; }
