@@ -103,7 +103,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.56.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.57.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -864,7 +864,11 @@ void loop() {
     cv_rate_patched = true;
     cv_rate_low_ms  = now_ms;
     // v1.40: with bow FM running, only the slow part is the velocity
-    const float a = strings.fmB.on ? strings.fmB.lp * cv_rate_top : (float)bow_cv_adc;
+    // v1.57: a held level reads the interrupt's ~30 Hz average (one raw
+    // reading has ~3 counts of ADC noise: bow force jitter = noise in a long
+    // note); a real step (> ~3 % of the range) passes at once
+    const float vlp = strings.fmB.lp * cv_rate_top;
+    const float a = (strings.fmB.on || fabsf((float)bow_cv_adc - vlp) < 0.03f * cv_rate_top) ? vlp : (float)bow_cv_adc;
     if(a > cv_rate_top) cv_rate_top = a;
     else cv_rate_top += (1500.0f - cv_rate_top) * 0.00002f;   // forget a peak over ~minutes, never below 1500
     rate_lvl = a / cv_rate_top;
@@ -917,7 +921,13 @@ void loop() {
   stringsPitchRange(strings.v[0].family, PITCH_LOW_HZ, PITCH_OCTAVES);
   float pitch_oct = (float)sample_pitch_poti * (PITCH_OCTAVES / 4095.0f);
   if(sample_pitch_jack < CV_UNPATCHED)                   // with audio-rate FM: only its slow part
-    pitch_oct += strings.fmP.on ? strings.fmP.lp : pitchVolts(sample_pitch_jack);
+  {
+    // v1.57: same for the pitch: one raw reading jitters ~+-15 cent (ADC
+    // noise), heard as noise in a long note. Held: the ~30 Hz average
+    // (< 1 cent); a step (> 0.05 V, ~2/3 semitone) passes at once
+    const float raw = pitchVolts(sample_pitch_jack), lp = strings.fmP.lp;
+    pitch_oct += (strings.fmP.on || fabsf(raw - lp) < 0.05f) ? lp : raw;
+  }
   float hz = PITCH_LOW_HZ * exp2f(pitch_oct);
   // v1.42 quantizer, the way a player finds the note: while the pitch moves
   // (a slide, a slewed CV, turning the knob) it follows freely; once it has
