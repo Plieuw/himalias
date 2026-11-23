@@ -24,6 +24,12 @@
 #include <math.h>
 #include <stdint.h>
 
+// v1.46: the firmware is built with -Os (small); the audio engine is built
+// with -O2: ~10 % fewer instructions per sample on the Cortex-M4 (measured
+// with tests/m4bench), for ~4 KB more flash
+#pragma GCC push_options
+#pragma GCC optimize ("O2")
+
 #ifndef STR_SR
 #define STR_SR 47619.0f
 #endif
@@ -233,6 +239,7 @@ struct StrVoice {
   float tremPh, tremInc;          // tremolo bow strokes
   float speedScale, pressOffs;    // this player's bow
   float panOff;                   // v1.45: place inside the section (-1 left ... +1 right, scaled)
+  float dynC, tiltC, vibC, bvC;   // v1.46: per-sample constants, refreshed when they change
   float slBase;                   // v1.39: friction slope without the accent (control rate)
   float detune;                   // static intonation (ratio)
   float drift, driftTarget;       // slow intonation drift (cents)
@@ -309,6 +316,8 @@ struct StrAir {
 struct StrSym {
   float buf[STR_SYM_STRINGS][STR_SYM_LEN];
   float len[STR_SYM_STRINGS];     // loop length (samples)
+  uint16_t off[STR_SYM_STRINGS];  // v1.46: read offset and fraction, precomputed from len
+  float fr[STR_SYM_STRINGS];
   float g[STR_SYM_STRINGS];       // loop gain (ring time)
   float lp[STR_SYM_STRINGS];      // loop lowpass state (highs die faster)
   float in, out;                  // input coupling, output level for this family
@@ -562,6 +571,17 @@ static const int8_t STR_DIVISI_MAJOR[8] = { 0, 4, 7, 12, 16, 19, -5, 24 };
 static const int8_t STR_DIVISI_MINOR[8] = { 0, 3, 7, 12, 15, 19, -5, 24 };
 
 // ------------------------------------------------------------------ init
+// v1.46: the parts of a player's per-sample maths that only change at note
+// starts or at control rate, computed once there (same result, less work)
+static inline void strVoiceConst(const StringsEngine &s, StrVoice &v) {
+  const StrArticDef &A = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : (uint8_t)ART_LEGATO];
+  v.dynC  = v.gain * v.bowGain * STR_VEL_LEV(v.vel) * v.levComp * v.atLev;
+  v.tiltC = 0.65f * (v.vel - 0.7f) + 0.25f * (v.bowMul - 1.0f);
+  v.vibC  = v.vibDepth * (0.6f + 0.4f * s.speed) * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.25f))
+          * (0.85f + 0.15f * s.pressure) * v.vibIntent * v.atVib;
+  v.bvC   = s.bowBase * s.speedCV * A.speed * v.speedScale * v.bowMul;
+}
+
 // v1.40: feed this sample's audio-rate inputs (call before stringsTick).
 // pitchV: 1V/OCT jack in volts; bowN: VELOCITY jack, 0 ... 1 of its range
 static inline void stringsFmInput(StringsEngine &s, float pitchV, float bowN) {
@@ -646,7 +666,7 @@ static inline void stringsInit(StringsEngine &s) {
     v.turn = 0; v.slip = 0.0f; v.tBp1 = v.tBp2 = 0.0f;
     v.lenNext = v.len; v.ringNext = 0.99f; v.openNext = v.openLen = v.slideOpen = 0.0f; v.slideSemis = 0.0f;
     v.attackK = 1.0f / (0.075f * STR_SR);
-    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.vibGrowK = 1.0f / (1.4f * STR_SR); v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f; v.slBase = 1.0f; v.panOff = 0.0f;
+    v.relRamp = 1.0f; v.glideK = 0.0005f; v.pe = v.peT = 1.0f; v.vibIntent = 1.0f; v.vibGrow = 1.0f; v.vibGrowK = 1.0f / (1.4f * STR_SR); v.levComp = 1.0f; v.swK = 1.0f; v.velWin = 0; v.at = 0.0f; v.atSl = 1.0f; v.atVib = 1.0f; v.atLev = 1.0f; v.slBase = 1.0f; v.panOff = 0.0f; v.dynC = v.tiltC = v.vibC = v.bvC = 0.0f;
     v.relK = 1.0f / (0.18f * STR_SR); v.relN = 0; v.relStop = false; v.fingerOff = false;
     v.nrng = 0x9E3779B9u * (uint32_t)(i + 1);
     v.ringLoss = 0.99f;
@@ -693,7 +713,7 @@ static inline void stringsInit(StringsEngine &s) {
     StrSym &y = s.sym[k];
     for (int j = 0; j < STR_SYM_STRINGS; j++) {
       for (int n = 0; n < STR_SYM_LEN; n++) y.buf[j][n] = 0.0f;
-      y.len[j] = 200.0f; y.g[j] = 0.0f; y.lp[j] = 0.0f;
+      y.len[j] = 200.0f; y.off[j] = 200; y.fr[j] = 0.0f; y.g[j] = 0.0f; y.lp[j] = 0.0f;
     }
     y.in = y.out = 0.0f; y.w = 0; y.fam = FAM_VIOLIN; y.n = 4; y.idle = 0;
   }
@@ -1069,6 +1089,7 @@ static inline void stringsControl(StringsEngine &s) {
       v.atSl = exp2f(-2.0f * v.at - 0.6f * (strClamp(v.vel, 0.0f, 1.3f) - 1.0f));
       v.slBase = s.slope * v.slMul * v.atSl + v.pressOffs * 4.0f - 0.6f * (v.vel - 1.0f);   // per-sample friction uses this
       v.atLev = 1.0f + 0.35f * v.at;                        // ~+1.3 dB per volt-ish of pressing
+      strVoiceConst(s, v);                                  // v1.46
       v.atVib = 1.0f + (v.at > 0.0f ? 0.9f * v.at : 0.4f * v.at);
     }
 
@@ -1157,6 +1178,8 @@ static inline void stringsControl(StringsEngine &s) {
       for (int j = 0; j < y.n; j++) {
         const float hz = STR_OPEN[f][j] * s.tuneRatio;
         y.len[j] = strClamp(STR_SR / hz - 0.6f, 8.0f, (float)(STR_SYM_LEN - 4));   // minus the loop filter delay
+        { const uint16_t li = (uint16_t)y.len[j]; const float lf = y.len[j] - (float)li;      // v1.46
+          if (lf > 0.0f) { y.off[j] = (uint16_t)(li + 1); y.fr[j] = 1.0f - lf; } else { y.off[j] = li; y.fr[j] = 0.0f; } }
         y.g[j] = (j == played) ? 0.9f
                : powf(0.001f, 1.0f / (STR_SYM_RING[f] * (s.mute ? 0.5f : 1.0f) * hz));
       }
@@ -1186,11 +1209,10 @@ static inline float strSymTick(StrSym &y, float x) {
   float out = 0.0f;
   const uint16_t w = y.w;
   for (int j = 0; j < y.n; j++) {
-    float rp = (float)w - y.len[j];
-    if (rp < 0.0f) rp += (float)STR_SYM_LEN;
-    uint32_t i0 = (uint32_t)rp;
-    const float fr = rp - (float)i0;
-    const uint32_t i1 = (i0 + 1 >= STR_SYM_LEN) ? 0 : i0 + 1;
+    int i0 = (int)w - (int)y.off[j];                         // v1.46: integer read position
+    if (i0 < 0) i0 += STR_SYM_LEN;
+    const float fr = y.fr[j];
+    const int i1 = (i0 + 1 >= STR_SYM_LEN) ? 0 : i0 + 1;
     const float r = y.buf[j][i0] + (y.buf[j][i1] - y.buf[j][i0]) * fr;
     y.lp[j] += (r - y.lp[j]) * 0.6f;
     y.buf[j][w] = in + y.g[j] * y.lp[j];
@@ -1462,7 +1484,6 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     s.gatePrev = gate;
   }
 
-  const float bowMax = s.bowBase * s.speedCV;
   const StrArticDef &A = STR_ARTIC[s.articEff < ART_COUNT ? s.articEff : (uint8_t)ART_LEGATO];
   const uint32_t strokeMax = (uint32_t)(A.stroke * STR_SR);
   float famBus[STR_FAMILIES]  = { 0, 0, 0, 0 };   // divisi players
@@ -1475,9 +1496,10 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     if (!v.active) continue;
 
     // this player's gate (after the onset delay)
+    bool edge = false;                                       // v1.46: refresh the constants after it
     if (v.onset) v.onset--;
     else if (v.gate != gate) {
-      v.gate = gate;
+      v.gate = gate; edge = true;
       if (!gate) {
         v.relN = 0;
         // short notes (fast tempo) and martele: the bow stops on the string,
@@ -1574,11 +1596,12 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
         }
       }
     }
+    if (edge) strVoiceConst(s, v);
     v.strokeN++;
     if (v.velWin) {                                          // catch the velocity peak
       v.velWin--;
       const float vn = strClamp(s.velocity, 0.0f, 1.3f);
-      if (vn > v.vel) { v.accent *= STR_VEL_ACC(vn) / STR_VEL_ACC(v.vel); v.vel = vn; }
+      if (vn > v.vel) { v.accent *= STR_VEL_ACC(vn) / STR_VEL_ACC(v.vel); v.vel = vn; strVoiceConst(s, v); }
     }
 
     // finger travel: speed computed at control rate (stringsControl)
@@ -1636,9 +1659,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     v.vs += vk * v.vc;
     v.vc -= vk * v.vs;
     const float vibTarget = (s.vibrato && (v.gate || (v.env > 0.05f && !v.fingerOff)) && A.mode == MODE_BOW && !v.vibDelay)
-                          ? v.vibDepth * (0.6f + 0.4f * s.speed) * (0.55f + 0.45f * strClamp(v.vel, 0.0f, 1.25f))
-                            * (0.85f + 0.15f * s.pressure) * v.jitD * (0.4f + 0.6f * v.vibWarm)
-                            * v.vibIntent * (0.5f + 0.5f * v.vibGrow) * v.atVib : 0.0f;
+                          ? v.vibC * v.jitD * (0.4f + 0.6f * v.vibWarm) * (0.5f + 0.5f * v.vibGrow) : 0.0f;
     v.vibAmt += (vibTarget - v.vibAmt) * 0.00007f;
     // the finger rolls back from the note: the pitch swings mostly below it,
     // and the roll is a little asymmetric (a touch of the 2nd harmonic)
@@ -1680,8 +1701,8 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       // Up- and down-bow are not identical: a slight speed/pressure bias
       // gives each stroke a different bite without changing its pitch or timing.
       const float bowDirection = (v.dir > 0.0f) ? 1.005f : 0.995f;
-      float bv = bowMax * A.speed * v.speedScale * v.env * v.swell * (1.0f + v.accent)
-               * v.dir * v.bowMul * bowDirection * v.pe * s.fmBow;   // v1.40: bow FM
+      float bv = v.bvC * v.env * v.swell * (1.0f + v.accent)
+               * v.dir * bowDirection * v.pe * s.fmBow;   // v1.40: bow FM
       // long notes: when the bow runs out the player changes bow: slows down,
       // turns (scratch) and speeds up again, ~90 ms. Every player has their
       // own bow length, so a section changes bow at different moments
@@ -1755,13 +1776,13 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
     v.tBp1 += (v.tranHp - v.tBp1) * 0.18f;                  // minus lowpass ~1.5 kHz
     const float trHp = v.tranHp - v.tBp1;
     // louder notes sound brighter: tilt the radiated sound with the velocity
-    const float tilt = 0.65f * (v.vel - 0.7f) + 0.25f * (v.bowMul - 1.0f);   // fast bow a bit brighter
+    const float tilt = v.tiltC;                             // fast bow a bit brighter
     const float radiated = bridgeOut + (bridgeOut - v.prevB) * tilt + trHp * 0.018f;
     v.prevB = bridgeOut;
     // dynamics: the string alone follows the bow speed unevenly from note to
     // note; a player also uses force and contact point, so the note level
     // follows the dynamic gate too (1 = no dynamic gate = unchanged)
-    const float dyn = v.gain * v.bowGain * STR_VEL_LEV(v.vel) * v.levComp * v.atLev;
+    const float dyn = v.dynC;
     if (i == 0) leadBus = radiated * dyn;                    // force on the bridge
     else      { famBus[v.family] += radiated * dyn; sideBus[v.family] += radiated * dyn * v.panOff; }
   }
@@ -1872,3 +1893,5 @@ static inline void stringsDivisi(StringsEngine &s, uint16_t reg) {
   if (((mask >> 1) & 0x1F) == 0) mask |= 0x04;               // at least two players
   s.divisiMask = mask;
 }
+
+#pragma GCC pop_options
