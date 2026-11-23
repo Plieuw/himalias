@@ -938,11 +938,11 @@ static inline void stringsControl(StringsEngine &s) {
   //      centre, cellos and basses right), celli + basses split, a single
   //      section centred and spread, a soloist in the middle
   {
-    static const float FULL[STR_FAMILIES] = { -0.50f, 0.20f, 0.45f, 0.65f };
-    static const float LOW[STR_FAMILIES]  = { 0.0f, 0.0f, -0.30f, 0.45f };
+    static const float SEAT_FULL[STR_FAMILIES] = { -0.50f, 0.20f, 0.45f, 0.65f };
+    static const float SEAT_LOW[STR_FAMILIES] = { 0.0f, 0.0f, -0.30f, 0.45f };
     static const float SPREAD[STR_VOICES] = { -0.55f, 0.55f, -0.25f, 0.25f, -0.85f, 0.85f };   // player places
     const bool fullS = ins == INS_FULL_STRINGS, lowS = ins == INS_LOW_STRINGS;
-    for (int f = 0; f < STR_FAMILIES; f++) s.famPan[f] = solo ? 0.0f : (fullS ? FULL[f] : (lowS ? LOW[f] : 0.0f));
+    for (int f = 0; f < STR_FAMILIES; f++) s.famPan[f] = solo ? 0.0f : (fullS ? SEAT_FULL[f] : (lowS ? SEAT_LOW[f] : 0.0f));
     const float w = solo ? 0.0f : (fullS || lowS ? 0.30f : 0.75f);          // width inside a section
     for (int i = 0; i < STR_VOICES; i++) s.v[i].panOff = w * SPREAD[i];
     s.leadPan = solo ? 0.0f : s.famPan[s.v[0].family] + s.v[0].panOff;
