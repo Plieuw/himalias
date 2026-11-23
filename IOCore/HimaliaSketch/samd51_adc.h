@@ -113,9 +113,9 @@ class SAMD51_ADC {
   // ADC1 1V/OCT); the 8th tick: the next knob / CV in turn (~1.2 kHz per
   // knob on ADC0, ~2 kHz on ADC1). On a knob tick the audio input is
   // extrapolated from its last two values. loop() only reads the cache.
-  // ADC clock 12 MHz (was 1.5): sampling time stays 4 us (the same accuracy,
-  // the same min / max readings as before), plus 2x averaging (12-bit result,
-  // same scale); one conversion ~10 us, well inside one tick (21 us).
+  // The ADCs keep the core's clock and settings (1.5 MHz, 12 bit, 4 us
+  // sampling, no averaging): the same readings as before; one conversion
+  // ~12.7 us, inside one tick (21 us).
   static const uint8_t N0 = 5, N1 = 3;
   uint8_t  ch0[N0 + 1], ch1[N1 + 1];          // [0] = audio-rate channel
   volatile uint16_t val0[N0 + 1], val1[N1 + 1];
@@ -124,24 +124,16 @@ class SAMD51_ADC {
   volatile uint16_t fast0 = 0, fast1 = 2028;  // audio-rate values (VELOCITY, 1V/OCT)
   uint16_t prev0 = 0, prev1 = 2028;
 
+  // v1.52: every wait has a time-out -- a register that never syncs must
+  // never stop the audio interrupt (a stuck wait = no sound at all)
   static void adcEnable(Adc *adc){
     adc->CTRLA.bit.ENABLE = 0x01;
-    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE );
+    uint32_t t = 20000; while( (adc->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE) && --t );
   }
   static void adcSelect(Adc *adc, uint8_t channel){
-    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL );
+    uint32_t t = 400; while( (adc->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL) && --t );
     adc->INPUTCTRL.bit.MUXPOS = channel;
-    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL );
-  }
-  static void adcFast(Adc *adc){
-    adc->CTRLA.bit.ENABLE = 0;
-    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE );
-    adc->CTRLA.bit.PRESCALER = ADC_CTRLA_PRESCALER_DIV4_Val;   // 48 MHz / 4 = 12 MHz
-    adc->SAMPCTRL.reg = 47;                                     // 48 clocks = 4 us sampling (as before)
-    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_SAMPCTRL );
-    adc->AVGCTRL.reg = ADC_AVGCTRL_SAMPLENUM_2 | ADC_AVGCTRL_ADJRES(1);   // mean of 2, 12-bit
-    while( adc->SYNCBUSY.reg & ADC_SYNCBUSY_AVGCTRL );
-    adcEnable(adc);
+    t = 400; while( (adc->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL) && --t );
   }
   static inline uint16_t extrap(uint16_t a, uint16_t b){       // 2a - b, clamped
     int v = 2 * (int)a - (int)b; return (uint16_t)(v < 0 ? 0 : (v > 4095 ? 4095 : v));
@@ -156,7 +148,9 @@ class SAMD51_ADC {
     for(int i = 0; i <= N0; i++) val0[i] = readAnalog(pins0[i], ch0[i], false);
     for(int i = 0; i <= N1; i++) val1[i] = readAnalog(pins1[i], ch1[i], true);
     fast0 = prev0 = val0[0]; fast1 = prev1 = val1[0];
-    adcFast(ADC0); adcFast(ADC1);
+    // v1.52: the ADCs keep the core's settings (1.5 MHz clock, 12 bit, no
+    // averaging -- exactly the readings of v1.39); one conversion ~12.7 us
+    // still fits in one tick (21 us)
     cur0 = 0; cur1 = 0; k8 = 0;
     adcSelect(ADC0, ch0[0]); ADC0->SWTRIG.bit.START = 1;
     adcSelect(ADC1, ch1[0]); ADC1->SWTRIG.bit.START = 1;
