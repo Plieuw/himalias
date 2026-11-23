@@ -716,8 +716,30 @@ int main() {
     if (seated < 4 || s.v[0].seatDel != 0) { std::printf("FAIL seats (phase per player)\n"); ++fails; }
   }
 
+  // v1.50: divisi follows the phrase -- a phrase starts close, opens up,
+  // the high point has the full chord, the note before a rest is unison
+  {
+    stringsInit(s); s.instrument = MDL_VIOLIN_SECTION; s.layout = LAY_MAJOR; s.rootHz = 220.0f; stringsControl(s);
+    const float mel[5] = { 0, 2, 4, 7, 5 };
+    const int L[5] = { 12000, 12000, 12000, 12000, 30000 }, G[5] = { 11000, 11000, 11000, 11000, 10000 };
+    int parts[5] = {0};
+    for (int rep = 0; rep < 4; ++rep)
+      for (int j = 0; j < 5; ++j)
+        for (int n = 0; n < L[j]; ++n) {
+          if ((n & 127) == 0) { s.rootHz = 220.0f * std::exp2(mel[j] / 12.0f); stringsControl(s); }
+          stringsTick(s, n < G[j]);
+          if (rep == 3 && n == 2000) {
+            int d = 0; int seen[64] = {0};
+            for (int i = 0; i < STR_VOICES; ++i) if (s.v[i].active || s.v[i].dbl) { const int k = s.v[i].semisNow + 24; if (k >= 0 && k < 64 && !seen[k]) { seen[k] = 1; ++d; } }
+            parts[j] = d;
+          }
+        }
+    std::printf("divisi parts over the phrase: %d %d %d %d %d\n", parts[0], parts[1], parts[2], parts[3], parts[4]);
+    if (!(parts[0] < parts[3] && parts[4] <= 2)) { std::printf("FAIL divisi does not follow the phrase\n"); ++fails; }
+  }
+
   if (fails) { std::printf("%d check(s) failed\n", fails); return 1; }
   std::printf("strings DSP test passed (%d instruments x %d layouts, %d articulations, intonation, "
-              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM, triggers, model fade, trigger out, doublers, styles)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
+              "pizzicato, tremolo, release, adaptive modulation, divisi output, velocity, ostinato tempo, output ceiling, deterministic phrase, phrase analysis, characters, gate-length articulation, look-ahead, down-bows, long arc, leader, aftertouch, one-string slides, legato, velocity phrasing, tempo-aware strokes, phrase ends, humanize, audio-rate FM, triggers, model fade, trigger out, doublers, styles, phrase divisi)\n", (int)INS_COUNT, (int)LAY_COUNT, (int)ART_COUNT);
   return 0;
 }

@@ -396,6 +396,7 @@ struct StrBrain {
   bool     phraseEnd;             // v1.37: a rest follows this note (pattern look-ahead)
   uint8_t  phraseN;               // phrase number in the long arc (8 phrases)
   bool     downBow;               // this note falls on a heavy beat: down-bow
+  uint8_t  density;               // v1.50: how many parts the section splits into (1 = unison ... 6)
   float    velAvg;                // v1.36: typical velocity in this music
   float    accent;                // v1.36: accent intention for this note (1 = neutral)
   uint8_t  velN;                  // v1.36: notes in velAvg
@@ -752,7 +753,7 @@ static inline void stringsInit(StringsEngine &s) {
     StrBrain &b = s.brain;
     b.prevSemis = 0.0f; b.ioiAvg = 0.6f; b.onNow = b.offNow = 0; b.haveOff = false;
     b.idx = 0; b.peak = -99.0f;
-    b.energy = 1.0f; b.accent = 1.0f; b.velAvg = 1.0f; b.velN = 0; b.gapAvg = 0.0f; b.gapN = 0; b.phraseEnd = false; b.attackMul = 1.0f; b.vibIntent = 1.0f; b.phraseStart = true; b.connected = false;
+    b.energy = 1.0f; b.accent = 1.0f; b.velAvg = 1.0f; b.velN = 0; b.density = 6; b.gapAvg = 0.0f; b.gapN = 0; b.phraseEnd = false; b.attackMul = 1.0f; b.vibIntent = 1.0f; b.phraseStart = true; b.connected = false;
   }
   s.bowNoise = 0.0f;
   s.transient = 1.0f;
@@ -1115,12 +1116,17 @@ static inline void stringsControl(StringsEngine &s) {
 
     uint8_t fam;
     int semis;
+    // v1.50: with fewer parts (phrase density) the extra players double a
+    // lower part instead of taking a chord tone of their own
+    const bool chordLay = lay == LAY_MAJOR || lay == LAY_MINOR || divisi;
+    const int dens = s.brain.density < 1 ? 1 : s.brain.density;
+    const int jj = (chordLay && !solo && i >= dens) ? i % dens : i;
     if (solo)      { fam = (ins == INS_SOLO_CELLO) ? FAM_CELLO : (ins == INS_SOLO_VIOLA ? FAM_VIOLA : FAM_VIOLIN); semis = 0; }
     else if (full) { fam = STR_FULL_FAMILY[i]; semis = STR_FULL_LAYOUT[lay][i]; }
     else if (low)  { fam = STR_LOW_FAMILY[i];  semis = STR_LOW_LAYOUT[lay][i]; }
     else           { fam = (ins == INS_CELLO_SECTION) ? FAM_CELLO : (ins == INS_VIOLA_SECTION ? FAM_VIOLA : FAM_VIOLIN);
-                     semis = lay == LAY_MAJOR ? STR_VOI_MAJ[CH.voi][i] : (lay == LAY_MINOR ? STR_VOI_MIN[CH.voi][i] : STR_SECTION_LAYOUT[lay][i]); }
-    if (divisi && !solo && i > 0) semis += pool[s.divisiTone[i] & 7];
+                     semis = lay == LAY_MAJOR ? STR_VOI_MAJ[CH.voi][jj] : (lay == LAY_MINOR ? STR_VOI_MIN[CH.voi][jj] : STR_SECTION_LAYOUT[lay][i]); }
+    if (divisi && !solo && jj > 0) semis += pool[s.divisiTone[jj] & 7];
     semis += A.semis;
     v.family = fam;
     v.semisNow = (int8_t)semis;
@@ -1423,7 +1429,8 @@ static inline void strBrainNote(StringsEngine &s) {
   float vib = 1.0f;
   float att = 1.0f;
   float acc = 1.0f;
-  if (!newPhrase && semis > b.peak + 0.5f) { e += 0.10f; vib += 0.20f; acc *= 1.2f; b.peak = semis; }
+  bool newHigh = false;
+  if (!newPhrase && semis > b.peak + 0.5f) { e += 0.10f; vib += 0.20f; acc *= 1.2f; b.peak = semis; newHigh = true; }
   // v1.36 adaptive: the player listens to how it is being played --
   //  - a note harder than the music around it is meant: more bow, a sharper
   //    attack and a real accent; a softer one is taken back further
@@ -1484,6 +1491,19 @@ static inline void strBrainNote(StringsEngine &s) {
   if (b.phraseEnd) { e *= 0.95f; vib += 0.15f; }
   // v1.37 tempo: fast notes are attacked crisper, slow ones placed
   att *= strClamp(sqrtf((b.nHist ? b.predIoi : 0.6f) / 0.5f), 0.65f, 1.15f);
+  // v1.50 divisi follows the phrase, the way an arranger writes it: a phrase
+  // starts close (2 parts), opens up note by note (a leap to a new high one
+  // part more), the last note before a rest closes back to unison. Film
+  // opens faster, soul stays warm (3+ parts), funk stabs are always full.
+  {
+    const uint8_t chr = s.model.chr;
+    int d = newPhrase ? 2 : (int)b.density + (chr == CHR_FILM ? 2 : 1);
+    if (newHigh && interval >= 3.0f) d++;                   // a leap to a new high opens it further
+    if (b.phraseEnd) d = 1;
+    if (chr == CHR_SOUL && d < 3) d = 3;
+    if (chr == CHR_FUNK) d = b.phraseEnd ? 4 : 6;
+    b.density = (uint8_t)(d < 1 ? 1 : (d > 6 ? 6 : d));
+  }
   // expression depth (SPREAD on models without a layout to choose): 0 = a
   // neutral player, 1 = natural default, 2 = twice the shaping
   const float x = s.expr;
@@ -1514,6 +1534,9 @@ static inline void strBrainVel(StringsEngine &s) {
   acc = strClamp(1.0f + (acc - 1.0f) * x, 0.5f, 2.5f);
   b.energy = strClamp(b.energy * ev, 0.60f, 1.50f);
   b.accent = strClamp(b.accent * acc, 0.4f, 3.0f);
+  // v1.50: a clearly harder note opens the chord one part, a softer one closes it
+  if (dv > 0.15f && b.density < 6) b.density++;
+  else if (dv < -0.15f && b.density > 1) b.density--;
   for (int i = 0; i < STR_VOICES; i++) {                    // players that already started
     StrVoice &v = s.v[i];
     if (!v.active || !v.gate || v.onset) continue;
@@ -1613,6 +1636,7 @@ static inline float stringsTick(StringsEngine &s, bool gate) {
       v.onset = (solo || i == 0) ? 0
               : (uint32_t)((gate ? 0.004f + 0.030f * r * together : 0.002f + 0.020f * r) * M.tight * STR_SR);
       if (gate) v.onset += (uint32_t)(s.laid * STR_SR);      // v1.49: laid back (soul) -- the whole section
+      if (gate && !solo && i > 0 && v.onset < (uint32_t)(0.003f * STR_SR)) v.onset = (uint32_t)(0.003f * STR_SR);   // v1.50: the new parts are set
       if (gate && !solo) v.hNoteT = 1.0f + 0.118f * M.tight * strRand(s);  // this note: +-1 dB
     }
     if (gate && !solo) strHumanizeMean(s, 1);

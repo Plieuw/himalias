@@ -1,4 +1,4 @@
-# Himalia Strings: handleiding (v1.49)
+# Himalia Strings: handleiding (v1.50)
 
 Firmware voor de IO Instruments Himalia: een fysiek model van gestreken snaren, van solist tot strijkorkest. Elke frase die je erin stuurt, wordt als een uitvoering gespeeld.
 
@@ -34,6 +34,14 @@ De knoppen en jacks zitten op hun vertrouwde plek. Hieronder staan ze in **speel
 | **Funk** | VL (stab), VL+, TUT | strakke korte stabs (AUTO leunt naar kort), nadruk op 2 en 4, val aan het eind van een frase; close dominant- en m7-akkoorden |
 
 De stijl bepaalt ook de akkoorden: bij een sectie de groot- en klein-layout op SPREAD en de divisi-tonen.
+
+**Divisi volgt de frase**, zoals een arrangeur hem zou schrijven:
+- Een frase begint dicht, in 2 partijen.
+- Bij elke noot gaat het akkoord een partij verder open. Een sprong naar een nieuw hoogtepunt opent er één extra.
+- De laatste noot voor een rust gaat terug naar unisono.
+- Een duidelijk hardere noot opent het akkoord één partij, een zachtere sluit het één partij.
+- Spelers zonder eigen partij verdubbelen een lagere partij.
+- Per stijl: film opent sneller, soul blijft warm (minstens 3 partijen) en funk-stabs zijn altijd vol.
 
 In een ensemble zit elke speler op zijn eigen afstand (0–2,5 ms), dus elke speler heeft een eigen fase.
 
