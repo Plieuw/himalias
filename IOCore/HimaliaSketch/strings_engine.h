@@ -27,8 +27,8 @@
 // v1.46: the firmware is built with -Os (small); the audio engine is built
 // with -O2: ~10 % fewer instructions per sample on the Cortex-M4 (measured
 // with tests/m4bench), for ~4 KB more flash
-#pragma GCC push_options
-#pragma GCC optimize ("O2")
+// (v1.53: back to the -Os build: smaller code, fits the 4 KB flash cache better)
+
 
 #ifndef STR_SR
 #define STR_SR 47619.0f
@@ -2125,4 +2125,4 @@ static inline void stringsDivisi(StringsEngine &s, uint16_t reg) {
   s.divisiMask = mask;
 }
 
-#pragma GCC pop_options
+

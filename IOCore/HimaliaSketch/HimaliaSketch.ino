@@ -103,7 +103,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.52.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.53.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -426,7 +426,7 @@ void setup() {
   // never slow the audio interrupt down
   __set_FPSCR(__get_FPSCR() | (1u << 24));
   stringsInit(strings);
-  strings.maxVoices = 4;                     // v1.48: start safe (4-6 half-rate players fit), the guard adjusts
+  strings.maxVoices = 2;                     // v1.53: start with the fewest players, the guard adds more when there is room
   stringsControl(strings);
   NVIC_SetPriority(TC4_IRQn, 0);             // audio first
   // cycle counter for the CPU load report on the serial monitor
@@ -651,6 +651,10 @@ static inline float pitchVolts(uint16_t adc){            // the 1V/OCT jack, cal
   return ((float)adc - cal_zero) * (1.0f / cal_cpv);
 }
 
+// v1.53: the audio interrupt runs from RAM. From flash, its ~21 KB did not
+// fit the 4 KB flash cache: every tick waited on flash wait states, the
+// interrupt ran out of time and USB / loop() starved (no sound, no drive).
+__attribute__((section(".data.ramfunc"), noinline))
 void renderAudio() {
   const uint32_t isr_c0 = DWT->CYCCNT;
   adc51.isrPoll();                                         // v1.40: audio-rate VELOCITY + 1V/OCT
@@ -790,9 +794,12 @@ void renderAudio() {
     // v1.43: react to sustained load, not to the single busy tick of a new
     // note (phrase analysis runs then): > 3 hot ticks within ~32 ticks
     static uint16_t hot = 0;
-    if(load > budget * 9 / 10){
+    if(load > budget){                                         // v1.53: an overrun: one player less at once
+      if(strings.maxVoices > 1) strings.maxVoices--;
+      hot = 0; calm = 0;
+    } else if(load > budget * 9 / 10){
       hot += 32;
-      if(hot > 96){ if(strings.maxVoices > 2) strings.maxVoices--; hot = 0; }
+      if(hot > 96){ if(strings.maxVoices > 1) strings.maxVoices--; hot = 0; }
       calm = 0;
     } else {
       if(hot) hot--;
