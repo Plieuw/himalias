@@ -81,9 +81,10 @@
 //                                   split; a section centred and spread; a
 //                                   soloist in the middle, both jacks equal).
 //                                   Mono: use SAMPLE OUT (right side softer)
-//   - square outputs 1 ... 5 ...... players 1-5 as a square wave while they sound
-//   - square output 6 ............. ENVELOPE OUT (v1.44): follows SAMPLE OUT,
-//                                   sigma-delta + the output's filter capacitor
+//   - 6x SQUARES OUT jack ......... ENVELOPE OUT (v1.51): the envelope of the
+//                                   ensemble; the six square pins (summed in the
+//                                   hardware) work as a 7-step DAC + dither,
+//                                   smoothed by their filter capacitors
 //   - PA22 (DIV TRIG) ............. 5 ms on heavy beats, 25 ms at phrase ends
 //   - LED CLK ..................... blinks on the detected beat
 //   - diagnose: hold TRIGGER while powering up -> divisi out = CPU load
@@ -102,7 +103,7 @@
 //   - unused libraries removed (Wire, SdFat, Adafruit_SPIFlash)
 //   - sample tune jack: correct pin (PB06) is switched to analog mode
 //
-#define HIMALIA_FW_VERSION "1.50.0-strings-beta"
+#define HIMALIA_FW_VERSION "1.51.0-strings-beta"
 
 #include "wiring_private.h"
 #include "Adafruit_ZeroTimer.h"
@@ -428,10 +429,9 @@ void setup() {
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
   // square outputs: square-wave layer of the players; filter caps off
-  PORT->Group[PORTA].DIRCLR.reg = (1ul << 14) | (1ul << 15) | (1ul << 16) | (1ul << 17) | (1ul << 18);
-  // v1.44: square output 6 = ENVELOPE OUT: its filter capacitor on (PA13 low)
-  PORT->Group[PORTA].OUTCLR.reg = 1ul << 13;
-  PORT->Group[PORTA].DIRSET.reg = 1ul << 13;
+  // v1.51: 6x SQUARES OUT = ENVELOPE OUT: all six filter capacitors on
+  PORT->Group[PORTA].OUTCLR.reg = (1ul << 13) | (1ul << 14) | (1ul << 15) | (1ul << 16) | (1ul << 17) | (1ul << 18);
+  PORT->Group[PORTA].DIRSET.reg = (1ul << 13) | (1ul << 14) | (1ul << 15) | (1ul << 16) | (1ul << 17) | (1ul << 18);
   zt4.enable(true);
 }
 
@@ -656,28 +656,6 @@ void renderAudio() {
 
   ++audio_tick;
 
-  // Square outputs: every player also plays its note as a square wave while
-  // it sounds (synth layer that follows the divisi)
-  {
-    static float sq[STR_VOICES];
-    bool hi[STR_VOICES];
-    for(int i = 0; i < STR_VOICES; i++){
-      const StrVoice &v = strings.v[i];
-      const bool on = v.active && (v.gate || v.env > 0.05f);
-      if(on){
-        sq[i] += 2.0f * v.hz * reciprocal_sr;              // phase -1 ... +1
-        if(sq[i] > 1.0f) sq[i] -= 2.0f;
-        hi[i] = sq[i] > 0.0f;
-      } else hi[i] = false;
-    }
-    if(hi[0]) PORT->Group[PORTA].OUTCLR.reg = 1ul << 19; else PORT->Group[PORTA].OUTSET.reg = 1ul << 19;
-    if(hi[1]) PORT->Group[PORTA].OUTCLR.reg = 1ul << 12; else PORT->Group[PORTA].OUTSET.reg = 1ul << 12;
-    if(hi[2]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 15; else PORT->Group[PORTB].OUTSET.reg = 1ul << 15;
-    if(hi[3]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 14; else PORT->Group[PORTB].OUTSET.reg = 1ul << 14;
-    if(hi[4]) PORT->Group[PORTB].OUTCLR.reg = 1ul << 13; else PORT->Group[PORTB].OUTSET.reg = 1ul << 13;
-    // v1.44: square output 6 (PB12) is the ENVELOPE OUT -- see below
-  }
-
   // Forward Button + Trigger to LED
   static bool     previous_trigger = false;
   if (  (PORT->Group[PORTB].IN.reg & (1ul << 16))  &&      // Trigger from Button
@@ -715,20 +693,29 @@ void renderAudio() {
     }
     float out = stringsTick(strings, gate);
 
-    // v1.44 ENVELOPE OUT on square output 6 (PB12): an envelope follower of
-    // SAMPLE OUT (~3 ms attack, ~120 ms release), as a 1-bit sigma-delta
-    // stream; the output's own filter capacitor (PA13, switched on) smooths
-    // it into a CV: 0 = silence ... full = playing loud
+    // v1.51 ENVELOPE OUT (the 6x SQUARES OUT jack): the six square pins are
+    // summed in the hardware, so they are used together as a little 7-step
+    // DAC -- the envelope sets how many pins are high, a first-order
+    // sigma-delta dithers between two steps, the pins' own filter
+    // capacitors (all on) smooth it: a clean envelope CV of the ensemble.
+    // Envelope follower of both outputs, ~3 ms attack, ~120 ms release.
     {
       static float envf = 0.0f, sd = 0.0f;
-      const float mo = 0.5f * (out + strings.outDivisi);      // both sides (v1.45 stereo)
+      const float mo = 0.5f * (out + strings.outDivisi);
       const float a = mo < 0.0f ? -mo : mo;
       envf += (a - envf) * (a > envf ? 0.0070f : 0.00017f);
       float e = envf * 2.5f;                                // the usual playing level fills the range
       e = e > 1.0f ? 1.0f : e;
-      sd += e;
-      if(sd >= 1.0f){ sd -= 1.0f; PORT->Group[PORTB].OUTCLR.reg = 1ul << 12; }   // outputs are inverted (as the squares)
-      else          {             PORT->Group[PORTB].OUTSET.reg = 1ul << 12; }
+      const float x = e * 6.0f + sd;
+      int n = (int)x; if(n > 6) n = 6;
+      sd = x - (float)n;
+      // outputs are inverted: OUTCLR = high at the jack
+      static const uint32_t PBm[4] = { 1ul << 15, 1ul << 14, 1ul << 13, 1ul << 12 };
+      if(n >= 1) PORT->Group[PORTA].OUTCLR.reg = 1ul << 19; else PORT->Group[PORTA].OUTSET.reg = 1ul << 19;
+      if(n >= 2) PORT->Group[PORTA].OUTCLR.reg = 1ul << 12; else PORT->Group[PORTA].OUTSET.reg = 1ul << 12;
+      for(int k = 0; k < 4; k++){
+        if(n >= 3 + k) PORT->Group[PORTB].OUTCLR.reg = PBm[k]; else PORT->Group[PORTB].OUTSET.reg = PBm[k];
+      }
     }
 
     // LED CLK: blinks on the beat the rhythm analysis found (also with
